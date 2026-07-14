@@ -9,8 +9,14 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import hashlib
 from collections import Counter, defaultdict
 from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+from physics_difficulty.data.formatting import format_question
 
 
 def main() -> None:
@@ -22,6 +28,7 @@ def main() -> None:
     args = parser.parse_args()
     groups: dict[str, list[dict]] = defaultdict(list)
     seen_ids: set[str] = set()
+    seen_texts: set[str] = set()
     for line in Path(args.input).read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
@@ -29,7 +36,11 @@ def main() -> None:
         identifier = str(row.get("question_id") or row.get("parent_id") or "")
         if not identifier or identifier in seen_ids:
             continue
+        digest = hashlib.sha256(format_question(row).encode("utf-8")).hexdigest()
+        if digest in seen_texts:
+            continue
         seen_ids.add(identifier)
+        seen_texts.add(digest)
         groups[str(row.get("difficulty", "unknown"))].append(row)
     rng = random.Random(args.seed)
     selected: list[dict] = []

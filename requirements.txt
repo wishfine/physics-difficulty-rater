@@ -4,3 +4,4 @@ peft
 accelerate
 numpy
 matplotlib
+scikit-learn

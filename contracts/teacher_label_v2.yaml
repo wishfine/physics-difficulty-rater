@@ -1,0 +1,23 @@
+schema_version: v2
+primary_label:
+  source: difficulty_rating.difficulty_level
+  levels: [送分题, 基础题, 中等题, 拔高题, 压轴题]
+problem_structure:
+  type: multi_label
+  values: [概念判断, 直接计算, 多条件建模, 实验探究, 图像表格分析, 单模块综合, 跨模块综合]
+other_required_features:
+  step_count: [1-2步, 3-5步, 6-8步, 9步以上]
+  calculation_complexity: [口算或直接判断, 简单笔算, 多公式联立, 复杂方程或范围计算]
+  reasoning_chain: [直接套用, 简单因果推理, 多层因果推理, 逆向推理或临界分析]
+  knowledge_count: [1个, 2-3个, 4个及以上]
+  subquestion_dependency: [无多问, 多问但相互独立, 多问且层层递进]
+  state_count: [单状态, 双状态, 多状态, 连续变化或临界状态]
+  constraint_count: [无约束, 单一约束, 多约束]
+  variable_relation: [无变量关系, 简单正反比, 图像函数关系, 多变量耦合关系]
+  information_processing: [无, 图表直接读数, 图表多组比较归纳, 图像反推或外推, 实验基础操作或读数, 实验控制变量或故障分析, 实验方案设计或误差评价, 图表与实验混合处理]
+metadata:
+  knowledge_domains: [力学, 电路, 热学, 光学声学]
+provenance_required:
+  - prompt_version
+  - postprocess_version
+  - teacher_model

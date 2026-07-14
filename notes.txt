@@ -14,3 +14,7 @@ Before the first 4B training run:
 The ten feature labels are auxiliary supervision and explanations. They must
 not be used as a hand-written inference rule in V2. `problem_structure` is a
 seven-tag multi-label BCE task; the remaining nine auxiliary heads use CE.
+
+Planned runs: (1) 1024-token baseline, (2) 1536-token length ablation, and
+(3) 2048-token length ablation. Use the same frozen split and calibration
+protocol. Do not select a model using the gold test set.

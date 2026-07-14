@@ -1,107 +1,104 @@
 #!/usr/bin/env python3
-"""Evaluate a saved V2 adapter and its auxiliary classification heads."""
+"""Evaluate a checkpoint on a frozen labelled split; no training is performed."""
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
-from transformers import AutoModel, AutoTokenizer
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
-from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
+from physics_difficulty.evaluation.metrics import calibration_metrics, classification_metrics
+from physics_difficulty.models.loading import load_rater
 from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES, MULTI_LABEL_FEATURES
 
 
-def macro_accuracy(predictions: list[int], labels: list[int], classes: int) -> float:
-    values = []
-    for class_id in range(classes):
-        indices = [index for index, label in enumerate(labels) if label == class_id]
-        if indices:
-            values.append(sum(predictions[index] == class_id for index in indices) / len(indices))
-    return sum(values) / len(values) if values else 0.0
+def multi_label_metrics(predictions: list[list[int]], labels: list[list[int]], values: list[str]) -> dict:
+    per_tag, f1s = {}, []
+    for index, value in enumerate(values):
+        tp = sum(prediction[index] and label[index] for prediction, label in zip(predictions, labels))
+        fp = sum(prediction[index] and not label[index] for prediction, label in zip(predictions, labels))
+        fn = sum(not prediction[index] and label[index] for prediction, label in zip(predictions, labels))
+        precision = tp / max(1, tp + fp)
+        recall = tp / max(1, tp + fn)
+        f1 = 2 * precision * recall / max(1e-12, precision + recall)
+        per_tag[value] = {"precision": precision, "recall": recall, "f1": f1, "support": sum(label[index] for label in labels)}
+        f1s.append(f1)
+    total_tp = sum(sum(prediction[index] and label[index] for prediction, label in zip(predictions, labels)) for index in range(len(values)))
+    total_fp = sum(sum(prediction[index] and not label[index] for prediction, label in zip(predictions, labels)) for index in range(len(values)))
+    total_fn = sum(sum(not prediction[index] and label[index] for prediction, label in zip(predictions, labels)) for index in range(len(values)))
+    precision = total_tp / max(1, total_tp + total_fp)
+    recall = total_tp / max(1, total_tp + total_fn)
+    return {"exact_match_accuracy": sum(prediction == label for prediction, label in zip(predictions, labels)) / max(1, len(labels)), "micro_f1": 2 * precision * recall / max(1e-12, precision + recall), "macro_f1": sum(f1s) / len(f1s), "per_tag": per_tag}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model_path", required=True)
-    parser.add_argument("--checkpoint_dir", required=True, help="directory containing adapter/ and difficulty_heads.pt")
+    parser.add_argument("--checkpoint_dir", required=True)
     parser.add_argument("--eval_file", required=True)
     parser.add_argument("--output_file", required=True)
     parser.add_argument("--max_length", type=int, default=1024)
     parser.add_argument("--batch_size", type=int, default=4)
+    parser.add_argument("--calibration_file")
     args = parser.parse_args()
-
     checkpoint = Path(args.checkpoint_dir)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.bfloat16 if device == "cuda" else torch.float32
-    tokenizer_source = checkpoint / "tokenizer" if (checkpoint / "tokenizer").is_dir() else args.model_path
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source, trust_remote_code=True)
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    backbone = AutoModel.from_pretrained(args.model_path, torch_dtype=dtype, trust_remote_code=True)
-    from peft import PeftModel
-    backbone = PeftModel.from_pretrained(backbone, checkpoint / "adapter")
-    model = QwenDifficultyRater(backbone).to(device)
-    head_state = torch.load(checkpoint / "difficulty_heads.pt", map_location=device)
-    model.norm.load_state_dict(head_state["norm"])
-    model.difficulty_head.load_state_dict(head_state["difficulty_head"])
-    model.feature_heads.load_state_dict(head_state["feature_heads"])
-    model.eval()
+    calibration_path = Path(args.calibration_file) if args.calibration_file else checkpoint / "calibration.json"
+    calibration = json.loads(calibration_path.read_text(encoding="utf-8")) if calibration_path.is_file() else {}
+    temperature = float(calibration.get("temperature", 1.0))
+    thresholds = calibration.get("feature_thresholds", {"problem_structure": 0.5})
 
+    model, tokenizer, device = load_rater(args.model_path, checkpoint)
     dataset = DifficultyDataset(args.eval_file, tokenizer, args.max_length)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=dataset.collate_fn)
-    difficulty_predictions: list[int] = []
-    difficulty_labels: list[int] = []
+    predictions, labels, probabilities, metadata = [], [], [], []
     feature_predictions = {name: [] for name in FEATURE_VALUES}
     feature_labels = {name: [] for name in FEATURE_VALUES}
     with torch.no_grad():
         for batch in loader:
             output = model(batch["input_ids"].to(device), batch["attention_mask"].to(device))
-            difficulty_predictions.extend(output["difficulty_logits"].float().argmax(dim=-1).cpu().tolist())
-            difficulty_labels.extend(batch["difficulty_labels"].tolist())
+            probability = torch.softmax(output["difficulty_logits"].float() / temperature, dim=-1).cpu()
+            probabilities.extend(probability.tolist())
+            predictions.extend(probability.argmax(dim=-1).tolist())
+            labels.extend(batch["difficulty_labels"].tolist())
+            metadata.extend(batch["metadata"])
             for name, logits in output["feature_logits"].items():
                 if name in MULTI_LABEL_FEATURES:
-                    feature_predictions[name].extend((torch.sigmoid(logits.float()) >= 0.5).int().cpu().tolist())
+                    feature_predictions[name].extend((torch.sigmoid(logits.float()) >= float(thresholds.get(name, 0.5))).int().cpu().tolist())
+                    feature_labels[name].extend(batch["feature_labels"][name].int().tolist())
                 else:
                     feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
-                feature_labels[name].extend(batch["feature_labels"][name].int().tolist() if name in MULTI_LABEL_FEATURES else batch["feature_labels"][name].tolist())
+                    feature_labels[name].extend(batch["feature_labels"][name].tolist())
 
     feature_metrics = {}
-    for name in FEATURE_VALUES:
+    for name, values in FEATURE_VALUES.items():
         if name in MULTI_LABEL_FEATURES:
-            pairs = list(zip(feature_predictions[name], feature_labels[name]))
-            true_positive = sum(sum(p and y for p, y in zip(prediction, label)) for prediction, label in pairs)
-            false_positive = sum(sum(p and not y for p, y in zip(prediction, label)) for prediction, label in pairs)
-            false_negative = sum(sum(not p and y for p, y in zip(prediction, label)) for prediction, label in pairs)
-            precision = true_positive / max(1, true_positive + false_positive)
-            recall = true_positive / max(1, true_positive + false_negative)
-            feature_metrics[name] = {
-                "exact_match_accuracy": sum(prediction == label for prediction, label in pairs) / max(1, len(pairs)),
-                "micro_f1": 2 * precision * recall / max(1e-12, precision + recall),
-            }
+            feature_metrics[name] = multi_label_metrics(feature_predictions[name], feature_labels[name], values)
         else:
-            feature_metrics[name] = {
-                "accuracy": sum(a == b for a, b in zip(feature_predictions[name], feature_labels[name])) / max(1, len(feature_labels[name]))
-            }
+            feature_metrics[name] = classification_metrics(feature_predictions[name], feature_labels[name], len(values))
+
+    slices = {}
+    for field in ("has_analysis", "has_subquestions", "input_length_bucket", "has_image_url", "image_dependency_risk", "raw_api_disagreement"):
+        groups: dict[str, list[int]] = defaultdict(list)
+        for index, item in enumerate(metadata):
+            groups[str(item.get(field, "unknown"))].append(index)
+        slices[field] = {value: classification_metrics([predictions[index] for index in indices], [labels[index] for index in indices]) for value, indices in groups.items()}
 
     result = {
-        "records": len(difficulty_labels),
-        "difficulty_accuracy": sum(a == b for a, b in zip(difficulty_predictions, difficulty_labels)) / max(1, len(difficulty_labels)),
-        "difficulty_macro_accuracy": macro_accuracy(difficulty_predictions, difficulty_labels, len(DIFFICULTY_LEVELS)),
-        "difficulty_class_support": {level: difficulty_labels.count(index) for index, level in enumerate(DIFFICULTY_LEVELS)},
-        "feature_metrics": feature_metrics,
-        "checkpoint_dir": str(checkpoint.resolve()),
+        "records": len(labels), "difficulty": classification_metrics(predictions, labels), "calibration": calibration_metrics(probabilities, labels),
+        "difficulty_class_support": {level: labels.count(index) for index, level in enumerate(DIFFICULTY_LEVELS)}, "feature_metrics": feature_metrics,
+        "slices": slices, "checkpoint_dir": str(checkpoint.resolve()), "temperature": temperature,
     }
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    print(json.dumps({"records": len(labels), "macro_f1": result["difficulty"]["macro_f1"], "balanced_accuracy": result["difficulty"]["balanced_accuracy"], "output_file": str(output_file)}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
