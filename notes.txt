@@ -11,5 +11,6 @@ Before the first 4B training run:
 2. Keep the current 133 labelled records only as a pipeline smoke-test set.
 3. Reserve a manually adjudicated gold set (target: 500) before model selection.
 
-The ten feature labels are auxiliary supervision and explanations.  They must
-not be used as a hand-written inference rule in V2.
+The ten feature labels are auxiliary supervision and explanations. They must
+not be used as a hand-written inference rule in V2. `problem_structure` is a
+seven-tag multi-label BCE task; the remaining nine auxiliary heads use CE.

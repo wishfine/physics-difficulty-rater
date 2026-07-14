@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
 from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
-from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES
+from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES, MULTI_LABEL_FEATURES
 
 
 def macro_accuracy(predictions: list[int], labels: list[int], classes: int) -> float:
@@ -66,18 +66,36 @@ def main() -> None:
             difficulty_predictions.extend(output["difficulty_logits"].float().argmax(dim=-1).cpu().tolist())
             difficulty_labels.extend(batch["difficulty_labels"].tolist())
             for name, logits in output["feature_logits"].items():
-                feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
-                feature_labels[name].extend(batch["feature_labels"][name].tolist())
+                if name in MULTI_LABEL_FEATURES:
+                    feature_predictions[name].extend((torch.sigmoid(logits.float()) >= 0.5).int().cpu().tolist())
+                else:
+                    feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
+                feature_labels[name].extend(batch["feature_labels"][name].int().tolist() if name in MULTI_LABEL_FEATURES else batch["feature_labels"][name].tolist())
+
+    feature_metrics = {}
+    for name in FEATURE_VALUES:
+        if name in MULTI_LABEL_FEATURES:
+            pairs = list(zip(feature_predictions[name], feature_labels[name]))
+            true_positive = sum(sum(p and y for p, y in zip(prediction, label)) for prediction, label in pairs)
+            false_positive = sum(sum(p and not y for p, y in zip(prediction, label)) for prediction, label in pairs)
+            false_negative = sum(sum(not p and y for p, y in zip(prediction, label)) for prediction, label in pairs)
+            precision = true_positive / max(1, true_positive + false_positive)
+            recall = true_positive / max(1, true_positive + false_negative)
+            feature_metrics[name] = {
+                "exact_match_accuracy": sum(prediction == label for prediction, label in pairs) / max(1, len(pairs)),
+                "micro_f1": 2 * precision * recall / max(1e-12, precision + recall),
+            }
+        else:
+            feature_metrics[name] = {
+                "accuracy": sum(a == b for a, b in zip(feature_predictions[name], feature_labels[name])) / max(1, len(feature_labels[name]))
+            }
 
     result = {
         "records": len(difficulty_labels),
         "difficulty_accuracy": sum(a == b for a, b in zip(difficulty_predictions, difficulty_labels)) / max(1, len(difficulty_labels)),
         "difficulty_macro_accuracy": macro_accuracy(difficulty_predictions, difficulty_labels, len(DIFFICULTY_LEVELS)),
         "difficulty_class_support": {level: difficulty_labels.count(index) for index, level in enumerate(DIFFICULTY_LEVELS)},
-        "feature_accuracy": {
-            name: sum(a == b for a, b in zip(feature_predictions[name], feature_labels[name])) / max(1, len(feature_labels[name]))
-            for name in FEATURE_VALUES
-        },
+        "feature_metrics": feature_metrics,
         "checkpoint_dir": str(checkpoint.resolve()),
     }
     output_file = Path(args.output_file)

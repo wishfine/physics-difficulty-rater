@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
 from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
+from physics_difficulty.schema import MULTI_LABEL_FEATURES
 
 def parse_args():
     first = argparse.ArgumentParser(add_help=False); first.add_argument("--config")
@@ -66,7 +67,14 @@ def main():
             difficulty_loss = weighted_mean(F.cross_entropy(outputs["difficulty_logits"].float(), labels, reduction="none"), weights)
             expected = torch.softmax(outputs["difficulty_logits"].float(), -1).mul(torch.arange(5, device=device)).sum(-1)
             ordinal_loss = weighted_mean(F.smooth_l1_loss(expected, labels.float(), reduction="none"), weights)
-            feature_losses = [weighted_mean(F.cross_entropy(logits.float(), batch["feature_labels"][name].to(device), reduction="none"), weights) for name, logits in outputs["feature_logits"].items()]
+            feature_losses = []
+            for name, logits in outputs["feature_logits"].items():
+                targets = batch["feature_labels"][name].to(device)
+                if name in MULTI_LABEL_FEATURES:
+                    per_sample = F.binary_cross_entropy_with_logits(logits.float(), targets, reduction="none").mean(dim=-1)
+                else:
+                    per_sample = F.cross_entropy(logits.float(), targets, reduction="none")
+                feature_losses.append(weighted_mean(per_sample, weights))
             loss = difficulty_loss + args.ordinal_loss_weight * ordinal_loss + args.feature_loss_weight * torch.stack(feature_losses).mean()
             (loss / args.gradient_accumulation_steps).backward(); total_loss += loss.item(); accumulated_micro_steps += 1
             if micro_step % args.gradient_accumulation_steps == 0:

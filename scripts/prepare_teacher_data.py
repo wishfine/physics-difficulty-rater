@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.formatting import diagnostics, format_question
 from physics_difficulty.data.quality import score_label_quality
-from physics_difficulty.schema import difficulty_id, normalize_v2_features
+from physics_difficulty.schema import difficulty_id, normalize_knowledge_domains, normalize_v2_features
 
 def text_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -42,7 +42,9 @@ def main() -> None:
             item = {
                 "id": str(record.get("question_id", line_number)), "parent_id": str(record.get("parent_id", record.get("question_id", line_number))),
                 "text": text, "text_sha256": digest, "difficulty_level": level, "difficulty_id": difficulty_id(level),
-                "raw_difficulty": record.get("difficulty"), "teacher_features": features, "label_source": "api_v7",
+                "raw_difficulty": record.get("difficulty"), "teacher_features": features,
+                "feature_metadata": {"knowledge_domains": normalize_knowledge_domains(rating.get("features"))},
+                "label_source": "api_v7",
                 "diagnostics": diagnostics(record, text), "label_quality": quality,
             }
             target.write(json.dumps(item, ensure_ascii=False) + "\n")

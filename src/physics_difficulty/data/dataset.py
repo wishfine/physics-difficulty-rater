@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import torch
 from torch.utils.data import Dataset
-from physics_difficulty.schema import FEATURE_TO_ID
+from physics_difficulty.schema import FEATURE_TO_ID, MULTI_LABEL_FEATURES
 
 class DifficultyDataset(Dataset):
     def __init__(self, path: str, tokenizer: Any, max_length: int):
@@ -17,5 +17,13 @@ class DifficultyDataset(Dataset):
 
     def collate_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         encoded = self.tokenizer([item["text"] for item in batch], truncation=True, max_length=self.max_length, padding=True, return_tensors="pt")
-        feature_labels = {name: torch.tensor([FEATURE_TO_ID[name][item["teacher_features"][name]] for item in batch], dtype=torch.long) for name in FEATURE_TO_ID}
+        feature_labels = {}
+        for name, value_to_id in FEATURE_TO_ID.items():
+            values = [item["teacher_features"][name] for item in batch]
+            if name in MULTI_LABEL_FEATURES:
+                feature_labels[name] = torch.tensor(
+                    [[float(tag in values_for_item) for tag in value_to_id] for values_for_item in values], dtype=torch.float32
+                )
+            else:
+                feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
         return {**encoded, "difficulty_labels": torch.tensor([item["difficulty_id"] for item in batch], dtype=torch.long), "sample_weights": torch.tensor([item["label_quality"]["sample_weight"] for item in batch], dtype=torch.float32), "feature_labels": feature_labels}

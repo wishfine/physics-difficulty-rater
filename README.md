@@ -1,8 +1,12 @@
 # Physics Difficulty Rater
 
 V2 is an independent, text-only Qwen + LoRA multi-task classifier for junior
-high-school physics question difficulty.  It predicts five final business
-levels (`送分题` to `压轴题`) and ten interpretable auxiliary features.
+high-school physics question difficulty. It predicts five final business
+levels (`送分题` to `压轴题`) and ten interpretable auxiliary features. The
+`problem_structure` feature is a seven-tag multi-label prediction; the other
+nine features are single-choice classifications. Physical domains are stored in
+the non-training `feature_metadata.knowledge_domains` field, so they do not
+compete with task-structure tags.
 
 ## Environment
 
