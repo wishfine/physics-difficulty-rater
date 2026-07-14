@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+.venv/
+data/raw/*
+data/teacher_labeled/*
+data/curated/*
+data/gold/*
+!data/*/.gitkeep
+outputs/
+runs/
+*.log

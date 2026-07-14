@@ -1,0 +1,15 @@
+V2 baseline run notes
+=====================
+
+Target: reproduce the API prompt + V7 post-process final label, not the source
+`difficulty` field.  The raw 25k source has 5k records in each source bucket,
+but those buckets are not accepted as supervision.
+
+Before the first 4B training run:
+1. Produce 3k--5k API+V7 teacher labels from the raw source and inspect the
+   distribution/quality manifest.
+2. Keep the current 133 labelled records only as a pipeline smoke-test set.
+3. Reserve a manually adjudicated gold set (target: 500) before model selection.
+
+The ten feature labels are auxiliary supervision and explanations.  They must
+not be used as a hand-written inference rule in V2.
