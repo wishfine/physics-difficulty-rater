@@ -8,7 +8,7 @@ import torch
 from torch.utils.data import Dataset
 
 from physics_difficulty.data.truncation import render_with_token_budget
-from physics_difficulty.schema import FEATURE_TO_ID, MULTI_LABEL_FEATURES
+from physics_difficulty.schema import FEATURE_TO_ID
 
 
 class DifficultyDataset(Dataset):
@@ -54,10 +54,7 @@ class DifficultyDataset(Dataset):
         feature_labels = {}
         for name, value_to_id in FEATURE_TO_ID.items():
             values = [item["teacher_features"][name] for item in batch]
-            if name in MULTI_LABEL_FEATURES:
-                feature_labels[name] = torch.tensor([[float(tag in item_values) for tag in value_to_id] for item_values in values], dtype=torch.float32)
-            else:
-                feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
+            feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
         result.update({
             "difficulty_labels": torch.tensor([item.get("teacher_difficulty_id", item.get("difficulty_id")) for item in batch], dtype=torch.long),
             "sample_weights": torch.tensor([item["label_quality"]["sample_weight"] for item in batch], dtype=torch.float32),

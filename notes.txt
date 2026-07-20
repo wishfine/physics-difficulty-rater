@@ -12,8 +12,9 @@ Before the first 4B training run:
 3. Reserve a manually adjudicated gold set (target: 500) before model selection.
 
 The ten feature labels are auxiliary supervision and explanations. They must
-not be used as a hand-written inference rule in V2. `problem_structure` is a
-seven-tag multi-label BCE task; the remaining nine auxiliary heads use CE.
+not be used as a hand-written inference rule in V2. This frozen-18-compatible
+release uses ten single-label CE heads, including the original nine-class
+`problem_structure` field.
 
 Planned runs: (1) 1024-token baseline, (2) 1536-token length ablation, and
 (3) 2048-token length ablation. Use the same frozen split and calibration

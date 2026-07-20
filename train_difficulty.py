@@ -20,7 +20,6 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
 from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
-from physics_difficulty.schema import MULTI_LABEL_FEATURES
 
 
 def parse_args() -> argparse.Namespace:
@@ -152,7 +151,7 @@ def main() -> None:
             feature_losses = []
             for name, logits in outputs["feature_logits"].items():
                 targets = batch["feature_labels"][name].to(device)
-                per_sample = F.binary_cross_entropy_with_logits(logits.float(), targets, reduction="none").mean(dim=-1) if name in MULTI_LABEL_FEATURES else F.cross_entropy(logits.float(), targets, reduction="none")
+                per_sample = F.cross_entropy(logits.float(), targets, reduction="none")
                 feature_losses.append(weighted_mean(per_sample, weights))
             loss = difficulty_loss + args.ordinal_loss_weight * ordinal_loss + args.feature_loss_weight * torch.stack(feature_losses).mean()
             (loss / args.gradient_accumulation_steps).backward()

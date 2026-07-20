@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate that an API label export satisfies the V2 teacher-label contract."""
+"""Validate exports from the frozen physics 18-feature teacher pipeline."""
 from __future__ import annotations
 
 import argparse
@@ -9,13 +9,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from physics_difficulty.schema import DIFFICULTY_TO_ID, FEATURE_VALUES, PROBLEM_STRUCTURE_TAGS
+from physics_difficulty.schema import DIFFICULTY_TO_ID, FROZEN_18_FEATURE_NAMES, PROBLEM_STRUCTURE_VALUES
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
-    parser.add_argument("--allow-legacy-problem-structure", action="store_true")
     args = parser.parse_args()
     errors = []
     checked = 0
@@ -28,23 +27,14 @@ def main() -> None:
         if rating.get("difficulty_level") not in DIFFICULTY_TO_ID:
             errors.append(f"line {line_number}: invalid difficulty_level")
         features = rating.get("features") or {}
-        structure = features.get("problem_structure")
-        if isinstance(structure, list):
-            if not structure or any(value not in PROBLEM_STRUCTURE_TAGS for value in structure):
-                errors.append(f"line {line_number}: invalid multi-label problem_structure")
-        elif not args.allow_legacy_problem_structure:
-            errors.append(f"line {line_number}: problem_structure must be a V2 label list")
-        for name in FEATURE_VALUES:
-            if name == "problem_structure":
-                continue
-            if name == "information_processing" and args.allow_legacy_problem_structure:
-                if "graph_table_requirement" in features and "experiment_requirement" in features:
-                    continue
+        if features.get("problem_structure") not in PROBLEM_STRUCTURE_VALUES:
+            errors.append(f"line {line_number}: invalid frozen problem_structure")
+        for name in FROZEN_18_FEATURE_NAMES:
             if name not in features:
-                errors.append(f"line {line_number}: missing feature {name}")
+                errors.append(f"line {line_number}: missing frozen feature {name}")
     if errors:
         raise SystemExit("Teacher-label contract failed:\n" + "\n".join(errors[:50]))
-    print(json.dumps({"checked_records": checked, "contract": "teacher_label_v2", "status": "PASS"}, ensure_ascii=False))
+    print(json.dumps({"checked_records": checked, "contract": "teacher_label_v2_frozen18", "status": "PASS"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

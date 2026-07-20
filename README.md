@@ -2,11 +2,11 @@
 
 V2 is an independent, text-only Qwen + LoRA multi-task classifier for junior
 high-school physics question difficulty. It predicts five final business
-levels (`送分题` to `压轴题`) and ten interpretable auxiliary features. The
-`problem_structure` feature is a seven-tag multi-label prediction; the other
-nine features are single-choice classifications. Physical domains are stored in
-the non-training `feature_metadata.knowledge_domains` field, so they do not
-compete with task-structure tags.
+levels (`送分题` to `压轴题`) and ten interpretable auxiliary features. This
+release is compatible with the frozen physics Prompt + V7 teacher system:
+`problem_structure` is its original nine-class single-label output, and all
+ten auxiliary heads are single-choice classifications. Physical domains are
+derived into the non-training `feature_metadata.knowledge_domains` field.
 
 ## Environment
 
@@ -27,12 +27,10 @@ sections, duplicate-conflict quarantine, and label-quality weights.
 bash scripts/prepare_pilot_data.sh /path/to/physics_difficulty_tiku_rated_v2_results.jsonl
 ```
 
-Validate a new V2 API export before preparing it. Existing V7 exports need the
-legacy switch because their `problem_structure` field is still single-choice.
+Validate a frozen 18-feature API export before preparing it.
 
 ```bash
-python scripts/validate_teacher_labels.py --input teacher_v2.jsonl
-python scripts/validate_teacher_labels.py --input old_v7.jsonl --allow-legacy-problem-structure
+python scripts/validate_teacher_labels.py --input teacher_frozen18.jsonl
 python scripts/split_teacher_data.py --input data/curated/teacher_v2.jsonl --output-dir data/curated/split_v2
 python scripts/oof_audit.py --input data/curated/split_v2/train.jsonl --output data/curated/train_with_oof.jsonl
 ```

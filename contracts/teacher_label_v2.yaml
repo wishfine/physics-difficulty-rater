@@ -1,11 +1,16 @@
-schema_version: v2
+schema_version: v2_frozen18
 primary_label:
   source: difficulty_rating.difficulty_level
+  producer: frozen_physics_prompt_plus_v7
   levels: [送分题, 基础题, 中等题, 拔高题, 压轴题]
-problem_structure:
-  type: multi_label
-  values: [概念判断, 直接计算, 多条件建模, 实验探究, 图像表格分析, 单模块综合, 跨模块综合]
-other_required_features:
+teacher_feature_source:
+  source: difficulty_rating.features
+  required_raw_fields: 18
+auxiliary_features_v2_frozen:
+  problem_structure:
+    type: single_label
+    source: legacy.problem_structure
+    values: [概念判断, 直接计算, 实验探究, 图像表格分析, 电路综合, 力学综合, 热学综合, 光学声学综合, 跨模块综合]
   step_count: [1-2步, 3-5步, 6-8步, 9步以上]
   calculation_complexity: [口算或直接判断, 简单笔算, 多公式联立, 复杂方程或范围计算]
   reasoning_chain: [直接套用, 简单因果推理, 多层因果推理, 逆向推理或临界分析]
@@ -14,10 +19,9 @@ other_required_features:
   state_count: [单状态, 双状态, 多状态, 连续变化或临界状态]
   constraint_count: [无约束, 单一约束, 多约束]
   variable_relation: [无变量关系, 简单正反比, 图像函数关系, 多变量耦合关系]
-  information_processing: [无, 图表直接读数, 图表多组比较归纳, 图像反推或外推, 实验基础操作或读数, 实验控制变量或故障分析, 实验方案设计或误差评价, 图表与实验混合处理]
+  information_processing:
+    source: [legacy.graph_table_requirement, legacy.experiment_requirement]
+    values: [无, 图表直接读数, 图表多组比较归纳, 图像反推或外推, 实验基础操作或读数, 实验控制变量或故障分析, 实验方案设计或误差评价, 图表与实验混合处理]
 metadata:
-  knowledge_domains: [力学, 电路, 热学, 光学声学]
-provenance_required:
-  - prompt_version
-  - postprocess_version
-  - teacher_model
+  knowledge_domains: derived_from_legacy_problem_structure
+provenance_required: [prompt_version, postprocess_version, teacher_model]

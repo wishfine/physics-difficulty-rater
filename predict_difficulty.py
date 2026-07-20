@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
 from physics_difficulty.data.formatting import canonical_sections, diagnostics, format_question
 from physics_difficulty.models.loading import load_rater
-from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES, MULTI_LABEL_FEATURES
+from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES
 
 
 def main() -> None:
@@ -33,7 +33,6 @@ def main() -> None:
     calibration_path = Path(args.calibration_file) if args.calibration_file else checkpoint / "calibration.json"
     calibration = json.loads(calibration_path.read_text(encoding="utf-8")) if calibration_path.is_file() else {}
     temperature = float(calibration.get("temperature", 1.0))
-    feature_threshold = float(calibration.get("feature_thresholds", {}).get("problem_structure", 0.5))
     fallback_policy = calibration.get("fallback_policy", {"min_max_probability": 0.6, "min_margin": 0.1, "max_entropy": 1.2})
     raw_records = [json.loads(line) for line in Path(args.input_file).read_text(encoding="utf-8").splitlines() if line.strip()]
     items = []
@@ -67,10 +66,7 @@ def main() -> None:
                     feature_output = {}
                     for name, values in FEATURE_VALUES.items():
                         logits = feature_logits[name][row_index]
-                        if name in MULTI_LABEL_FEATURES:
-                            feature_output[name] = [value for value, score in zip(values, torch.sigmoid(logits).tolist()) if score >= feature_threshold]
-                        else:
-                            feature_output[name] = values[int(logits.argmax().item())]
+                        feature_output[name] = values[int(logits.argmax().item())]
                     prediction_id = max(range(5), key=lambda class_id: probability[class_id])
                     results.append({"id": batch["ids"][row_index], "difficulty_level": DIFFICULTY_LEVELS[prediction_id], "difficulty_probability": probability, "difficulty_score": sum(value * (index + 1) for index, value in enumerate(probability)), "calibrated_confidence": maximum, "entropy": entropy, "top1_top2_margin": margin, "auxiliary_features": feature_output, "fallback_recommendation": bool(reasons), "fallback_reasons": reasons, "recommended_route": "vision_or_human" if "image_dependency_risk" in reasons else "api" if reasons else "local_model", "truncation": truncation})
         Path(args.output_file).write_text("".join(json.dumps(result, ensure_ascii=False) + "\n" for result in results), encoding="utf-8")

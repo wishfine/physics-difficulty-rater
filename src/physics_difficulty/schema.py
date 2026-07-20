@@ -1,4 +1,4 @@
-"""Stable V2 label schema and conversion from the legacy 18-feature output."""
+"""Frozen-18-compatible V2 schema for the physics local model."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -6,13 +6,16 @@ from typing import Any, Dict, List
 DIFFICULTY_LEVELS = ["送分题", "基础题", "中等题", "拔高题", "压轴题"]
 DIFFICULTY_TO_ID = {name: index for index, name in enumerate(DIFFICULTY_LEVELS)}
 
-PROBLEM_STRUCTURE_TAGS = [
-    "概念判断", "直接计算", "多条件建模", "实验探究", "图像表格分析", "单模块综合", "跨模块综合",
-]
+PROBLEM_STRUCTURE_VALUES = ["概念判断", "直接计算", "实验探究", "图像表格分析", "电路综合", "力学综合", "热学综合", "光学声学综合", "跨模块综合"]
 KNOWLEDGE_DOMAINS = ["力学", "电路", "热学", "光学声学"]
+FROZEN_18_FEATURE_NAMES = (
+    "step_count", "formula_count", "calculation_complexity", "reasoning_chain", "problem_structure", "additional_structure",
+    "information_carrier", "reality_question", "subquestion_dependency", "knowledge_count", "knowledge_diff", "cross_module",
+    "state_count", "constraint_count", "variable_relation", "experiment_requirement", "graph_table_requirement", "error_risk",
+)
 
 FEATURE_VALUES = {
-    "problem_structure": PROBLEM_STRUCTURE_TAGS,
+    "problem_structure": PROBLEM_STRUCTURE_VALUES,
     "step_count": ["1-2步", "3-5步", "6-8步", "9步以上"],
     "calculation_complexity": ["口算或直接判断", "简单笔算", "多公式联立", "复杂方程或范围计算"],
     "reasoning_chain": ["直接套用", "简单因果推理", "多层因果推理", "逆向推理或临界分析"],
@@ -24,8 +27,6 @@ FEATURE_VALUES = {
     "information_processing": ["无", "图表直接读数", "图表多组比较归纳", "图像反推或外推", "实验基础操作或读数", "实验控制变量或故障分析", "实验方案设计或误差评价", "图表与实验混合处理"],
 }
 FEATURE_TO_ID = {name: {value: index for index, value in enumerate(values)} for name, values in FEATURE_VALUES.items()}
-MULTI_LABEL_FEATURES = {"problem_structure"}
-SINGLE_LABEL_FEATURES = tuple(name for name in FEATURE_VALUES if name not in MULTI_LABEL_FEATURES)
 
 LEGACY_DEFAULTS = {
     "problem_structure": "概念判断", "step_count": "1-2步", "calculation_complexity": "口算或直接判断",
@@ -47,37 +48,13 @@ def merge_information_processing(graph: Any, experiment: Any) -> str:
     experiment_map = {"基础操作或读数": "实验基础操作或读数", "控制变量或故障分析": "实验控制变量或故障分析", "方案设计或误差评价": "实验方案设计或误差评价"}
     return graph_map.get(graph, experiment_map.get(experiment, "无"))
 
-def normalize_problem_structure(value: Any) -> List[str]:
-    """Convert the legacy one-of-nine field to V2 structural tags.
-
-    The old feature mixed physical domains (such as 电路综合) and task forms.
-    V2 keeps only task/knowledge organisation in the trainable tag set; domain
-    details are deliberately not inferred from this lossy legacy field.
-    """
-    if isinstance(value, list):
-        tags = [str(tag).strip() for tag in value if str(tag).strip() in PROBLEM_STRUCTURE_TAGS]
-        return list(dict.fromkeys(tags)) or ["概念判断"]
-    mapping = {
-        "概念判断": ["概念判断"],
-        "直接计算": ["直接计算"],
-        "实验探究": ["实验探究"],
-        "图像表格分析": ["图像表格分析"],
-        "电路综合": ["单模块综合"],
-        "力学综合": ["单模块综合"],
-        "热学综合": ["单模块综合"],
-        "光学声学综合": ["单模块综合"],
-        "跨模块综合": ["跨模块综合"],
-        "多条件建模": ["多条件建模"],
-        "单模块综合": ["单模块综合"],
-    }
-    return mapping.get(str(value or "").strip(), ["概念判断"])
+def normalize_problem_structure(value: Any) -> str:
+    """Keep the frozen teacher's nine-way structural label without inference."""
+    return _valid("problem_structure", value, "概念判断")
 
 def normalize_knowledge_domains(features: Dict[str, Any] | None) -> List[str]:
     """Keep physical-domain tags as metadata, not as an auxiliary loss."""
     features = features or {}
-    value = features.get("knowledge_domains", features.get("knowledge_domain"))
-    if isinstance(value, list):
-        return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip() in KNOWLEDGE_DOMAINS))
     legacy_domain = {
         "力学综合": "力学", "电路综合": "电路", "热学综合": "热学", "光学声学综合": "光学声学",
     }.get(str(features.get("problem_structure") or "").strip())

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.formatting import FORMATTER_VERSION, canonical_sections, diagnostics, format_question
 from physics_difficulty.data.quality import score_label_quality
-from physics_difficulty.schema import difficulty_id, normalize_knowledge_domains, normalize_v2_features
+from physics_difficulty.schema import FROZEN_18_FEATURE_NAMES, difficulty_id, normalize_knowledge_domains, normalize_v2_features
 
 
 def text_hash(text: str) -> str:
@@ -65,7 +65,12 @@ def main() -> None:
                 continue
             text = format_question(record)
             digest = text_hash(text)
-            features = normalize_v2_features(rating.get("features"))
+            legacy_features = rating.get("features") or {}
+            missing_legacy = [name for name in FROZEN_18_FEATURE_NAMES if name not in legacy_features]
+            if missing_legacy:
+                stats["missing_frozen_features"] += 1
+                continue
+            features = normalize_v2_features(legacy_features)
             quality = score_label_quality(level, features, record)
             item = {
                 "id": str(record.get("question_id", line_number)),
@@ -78,9 +83,11 @@ def main() -> None:
                 "teacher_difficulty_level": level,
                 "teacher_difficulty_id": teacher_id,
                 "teacher_features": features,
-                "feature_metadata": {"knowledge_domains": normalize_knowledge_domains(rating.get("features"))},
-                "label_source": "api_v7",
-                "label_schema_version": "v2",
+                "teacher_features_legacy18": legacy_features,
+                "feature_metadata": {"knowledge_domains": normalize_knowledge_domains(legacy_features)},
+                "label_source": "api_v7_frozen18",
+                "feature_schema_version": "v2_frozen18",
+                "label_schema_version": "v2_frozen18",
                 "prompt_version": args.prompt_version,
                 "postprocess_version": args.postprocess_version,
                 "teacher_model": args.teacher_model,
@@ -115,7 +122,7 @@ def main() -> None:
 
     manifest = {
         "input": str(Path(args.input).resolve()), "output": str(output.resolve()), "conflict_output": str(conflict_output.resolve()),
-        "schema_version": "v2", "formatter_version": FORMATTER_VERSION, "records": len(accepted), "quarantined_records": len(quarantined),
+        "schema_version": "v2_frozen18", "formatter_version": FORMATTER_VERSION, "records": len(accepted), "quarantined_records": len(quarantined),
         "provenance": {"prompt_version": args.prompt_version, "postprocess_version": args.postprocess_version, "teacher_model": args.teacher_model},
         "stats": dict(stats),
     }
