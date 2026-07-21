@@ -53,6 +53,24 @@ checkpoint every 0.25 epoch and at every completed epoch. Resume an interrupted
 run by appending its checkpoint directory as the fifth positional argument to
 `server_run_train.sh`.
 
+## Adjudicated gold evaluation
+
+Build the external GPT-5.6 re-reviewed gold set from its CSV. Its primary
+label is `修订后主标签`; the optional acceptable adjacent level is reported as
+an additional metric. The command refuses to build a final gold test set if
+any IDs overlap the training split.
+
+```bash
+python scripts/prepare_adjudicated_gold.py \
+  --labels_csv data/gold/physics_adjudicated_labels_gpt56_rereview_1066.csv \
+  --reference_train_file data/curated/split_v2_frozen18/train.jsonl \
+  --output data/gold/physics_adjudicated_gold_1065.jsonl \
+  --skip_unrenderable
+```
+
+The current local rater is text-only. `--skip_unrenderable` records and skips
+any adjudicated item with no textual question, options, or solution.
+
 ```bash
 python evaluate_difficulty.py \
   --model_path /path/to/Qwen3.5-4B \

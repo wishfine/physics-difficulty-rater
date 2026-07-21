@@ -13,9 +13,14 @@ from physics_difficulty.schema import FEATURE_TO_ID
 
 class DifficultyDataset(Dataset):
     """Versioned training/evaluation data with shared section-aware truncation."""
-    def __init__(self, path: str, tokenizer: Any, max_length: int, require_labels: bool = True):
+    LABEL_KEYS = ("gold_difficulty_id", "teacher_difficulty_id", "difficulty_id")
+
+    def __init__(self, path: str, tokenizer: Any, max_length: int, require_labels: bool = True, require_feature_labels: bool | None = None):
         self.items = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
-        self.tokenizer, self.max_length, self.require_labels = tokenizer, max_length, require_labels
+        self.tokenizer, self.max_length = tokenizer, max_length
+        if require_feature_labels is None:
+            require_feature_labels = require_labels and bool(self.items) and all("teacher_features" in item for item in self.items)
+        self.require_labels, self.require_feature_labels = require_labels, require_feature_labels
         self.tokenizer.padding_side = "right"
         # Rendering with the section-aware truncator calls the tokenizer several
         # times for long questions. Inputs are immutable within a run, so cache
@@ -23,8 +28,10 @@ class DifficultyDataset(Dataset):
         self._render_cache: Dict[int, tuple[str, Dict[str, Any]]] = {}
         if require_labels:
             for item in self.items:
-                if "teacher_difficulty_id" not in item and "difficulty_id" not in item:
-                    raise ValueError("Training/evaluation item is missing teacher_difficulty_id")
+                if not any(key in item for key in self.LABEL_KEYS):
+                    raise ValueError("Training/evaluation item is missing a difficulty label")
+                if require_feature_labels and "teacher_features" not in item:
+                    raise ValueError("Training/evaluation item is missing teacher_features")
 
     def __len__(self) -> int:
         return len(self.items)
@@ -56,19 +63,32 @@ class DifficultyDataset(Dataset):
         result = {
             **encoded,
             "ids": [str(item.get("id", "")) for item in batch],
-            "metadata": [item.get("diagnostics", {}) | {"source_dataset_id": item.get("source_dataset_id"), "parent_id": item.get("parent_id")} for item in batch],
+            "metadata": [item.get("diagnostics", {}) | {
+                "source_dataset_id": item.get("source_dataset_id"),
+                "parent_id": item.get("parent_id"),
+                "label_source": item.get("label_source"),
+                "gold_confidence": item.get("gold_confidence"),
+                "acceptable_difficulty_ids": item.get("acceptable_difficulty_ids"),
+            } for item in batch],
             "truncation": [item[1] for item in rendered],
         }
         if not self.require_labels:
             return result
 
-        feature_labels = {}
-        for name, value_to_id in FEATURE_TO_ID.items():
-            values = [item["teacher_features"][name] for item in batch]
-            feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
+        if self.require_feature_labels:
+            feature_labels = {}
+            for name, value_to_id in FEATURE_TO_ID.items():
+                values = [item["teacher_features"][name] for item in batch]
+                feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
+            result["feature_labels"] = feature_labels
+
+        def label_for(item: Dict[str, Any]) -> int:
+            for key in self.LABEL_KEYS:
+                if key in item:
+                    return int(item[key])
+            raise ValueError("Item is missing a difficulty label")
         result.update({
-            "difficulty_labels": torch.tensor([item.get("teacher_difficulty_id", item.get("difficulty_id")) for item in batch], dtype=torch.long),
-            "sample_weights": torch.tensor([item["label_quality"]["sample_weight"] for item in batch], dtype=torch.float32),
-            "feature_labels": feature_labels,
+            "difficulty_labels": torch.tensor([label_for(item) for item in batch], dtype=torch.long),
+            "sample_weights": torch.tensor([item.get("label_quality", {}).get("sample_weight", 1.0) for item in batch], dtype=torch.float32),
         })
         return result

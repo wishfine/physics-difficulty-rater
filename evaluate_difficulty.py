@@ -35,11 +35,15 @@ def main() -> None:
     temperature = float(calibration.get("temperature", 1.0))
 
     model, tokenizer, device = load_rater(args.model_path, checkpoint)
+    # Gold adjudication files carry difficulty labels only. Teacher validation
+    # files also carry the ten frozen auxiliary labels; Dataset detects this
+    # automatically and preserves their feature metrics.
     dataset = DifficultyDataset(args.eval_file, tokenizer, args.max_length)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=dataset.collate_fn)
     predictions, labels, probabilities, metadata = [], [], [], []
     feature_predictions = {name: [] for name in FEATURE_VALUES}
     feature_labels = {name: [] for name in FEATURE_VALUES}
+    has_feature_labels = False
     with torch.no_grad():
         for batch in loader:
             output = model(batch["input_ids"].to(device), batch["attention_mask"].to(device))
@@ -48,26 +52,33 @@ def main() -> None:
             predictions.extend(probability.argmax(dim=-1).tolist())
             labels.extend(batch["difficulty_labels"].tolist())
             metadata.extend(batch["metadata"])
-            for name, logits in output["feature_logits"].items():
-                feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
-                feature_labels[name].extend(batch["feature_labels"][name].tolist())
+            if "feature_labels" in batch:
+                has_feature_labels = True
+                for name, logits in output["feature_logits"].items():
+                    feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
+                    feature_labels[name].extend(batch["feature_labels"][name].tolist())
 
-    feature_metrics = {}
-    for name, values in FEATURE_VALUES.items():
-        feature_metrics[name] = classification_metrics(feature_predictions[name], feature_labels[name], len(values))
+    feature_metrics = ({name: classification_metrics(feature_predictions[name], feature_labels[name], len(values)) for name, values in FEATURE_VALUES.items()} if has_feature_labels else {})
 
     slices = {}
-    for field in ("has_analysis", "has_subquestions", "input_length_bucket", "has_image_url", "image_dependency_risk", "raw_api_disagreement"):
+    for field in ("has_analysis", "has_subquestions", "input_length_bucket", "has_image_url", "image_dependency_risk", "raw_api_disagreement", "gold_confidence"):
         groups: dict[str, list[int]] = defaultdict(list)
         for index, item in enumerate(metadata):
             groups[str(item.get(field, "unknown"))].append(index)
         slices[field] = {value: classification_metrics([predictions[index] for index in indices], [labels[index] for index in indices]) for value, indices in groups.items()}
 
+    acceptable_sets = [item.get("acceptable_difficulty_ids") for item in metadata]
+    acceptable_accuracy = (
+        sum(prediction in accepted for prediction, accepted in zip(predictions, acceptable_sets) if accepted) /
+        max(1, sum(bool(accepted) for accepted in acceptable_sets))
+    )
     result = {
         "records": len(labels), "difficulty": classification_metrics(predictions, labels), "calibration": calibration_metrics(probabilities, labels),
         "difficulty_class_support": {level: labels.count(index) for index, level in enumerate(DIFFICULTY_LEVELS)}, "feature_metrics": feature_metrics,
         "slices": slices, "checkpoint_dir": str(checkpoint.resolve()), "temperature": temperature,
     }
+    if any(acceptable_sets):
+        result["acceptable_level_accuracy"] = acceptable_accuracy
     output_file = Path(args.output_file)
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
