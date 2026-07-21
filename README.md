@@ -72,6 +72,20 @@ python scripts/prepare_adjudicated_gold.py \
 The current local rater is text-only. `--skip_unrenderable` records and skips
 any adjudicated item with no textual question, options, or solution.
 
+## Initial checkpoint baseline
+
+Create an untrained, seed-matched LoRA plus task-head checkpoint before any
+gradient update, then evaluate it on the same validation split as training
+checkpoints. This measures training gain, not the Qwen chat model's inherent
+rating ability.
+
+```bash
+python scripts/create_initial_checkpoint.py \
+  --model_path /path/to/Qwen3.5-4B \
+  --output_dir outputs/run_name/checkpoint-initial \
+  --seed 42
+```
+
 ```bash
 python evaluate_difficulty.py \
   --model_path /path/to/Qwen3.5-4B \
