@@ -35,6 +35,7 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--reference_train_file", help="Optional train JSONL; fail if any gold IDs overlap it.")
     parser.add_argument("--allow_reference_overlap", action="store_true")
+    parser.add_argument("--exclude_reference_overlap", action="store_true", help="Build a final holdout by excluding IDs present in --reference_train_file.")
     parser.add_argument("--skip_unrenderable", action="store_true", help="Exclude rows with no text input; their IDs are recorded in the summary.")
     args = parser.parse_args()
 
@@ -43,6 +44,8 @@ def main() -> None:
         rows = list(csv.DictReader(handle))
     if not rows:
         raise ValueError("Adjudication CSV is empty")
+    if args.exclude_reference_overlap and not args.reference_train_file:
+        raise ValueError("--exclude_reference_overlap requires --reference_train_file")
 
     seen, output_rows, skipped_unrenderable = set(), [], []
     for row in rows:
@@ -89,7 +92,9 @@ def main() -> None:
     overlap = set()
     if args.reference_train_file:
         overlap = seen & read_ids(Path(args.reference_train_file))
-        if overlap and not args.allow_reference_overlap:
+        if overlap and args.exclude_reference_overlap:
+            output_rows = [row for row in output_rows if row["id"] not in overlap]
+        elif overlap and not args.allow_reference_overlap:
             raise ValueError(f"Gold/train ID overlap: {len(overlap)} records. Refuse to create a final gold test set; remove overlap from training or pass --allow_reference_overlap for audit-only output.")
 
     output_path = Path(args.output)
@@ -102,6 +107,7 @@ def main() -> None:
         "primary_label_distribution": Counter(row["gold_difficulty_level"] for row in output_rows),
         "confidence_distribution": Counter(row["gold_confidence"] for row in output_rows),
         "reference_train_overlap": len(overlap),
+        "excluded_reference_overlap_ids": sorted(overlap) if args.exclude_reference_overlap else [],
         "skipped_unrenderable_ids": skipped_unrenderable,
     }, ensure_ascii=False, default=dict))
 

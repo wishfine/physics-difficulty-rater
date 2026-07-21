@@ -57,14 +57,15 @@ run by appending its checkpoint directory as the fifth positional argument to
 
 Build the external GPT-5.6 re-reviewed gold set from its CSV. Its primary
 label is `修订后主标签`; the optional acceptable adjacent level is reported as
-an additional metric. The command refuses to build a final gold test set if
-any IDs overlap the training split.
+an additional metric. The command explicitly excludes IDs that overlap the
+training split, producing a leakage-free final holdout.
 
 ```bash
 python scripts/prepare_adjudicated_gold.py \
   --labels_csv data/gold/physics_adjudicated_labels_gpt56_rereview_1066.csv \
   --reference_train_file data/curated/split_v2_frozen18/train.jsonl \
-  --output data/gold/physics_adjudicated_gold_1065.jsonl \
+  --output data/gold/physics_adjudicated_gold_1049.jsonl \
+  --exclude_reference_overlap \
   --skip_unrenderable
 ```
 

@@ -311,7 +311,7 @@ records_in_csv: 1066
 2. `可接受等级` 转为允许档位集合，用于补充的 `acceptable_level_accuracy`；
 3. `修订后置信度` 保留为高/中质量切片；
 4. 绝不读取其他 JSON 文件中不可信的难度字段；
-5. 构建前必须与 `train.jsonl` 按题目 ID 求交集，发现重叠即失败；
+5. 构建前必须与 `train.jsonl` 按题目 ID 求交集；最终留出集显式剔除重叠题并输出 ID 清单；
 6. 没有题干、选项、解析的纯图片题不能由当前文本模型公平评估，显式跳过并记录 ID。
 
 构建命令：
@@ -320,11 +320,12 @@ records_in_csv: 1066
 python scripts/prepare_adjudicated_gold.py \
   --labels_csv data/gold/physics_adjudicated_labels_gpt56_rereview_1066.csv \
   --reference_train_file data/curated/split_v2_frozen18/train.jsonl \
-  --output data/gold/physics_adjudicated_gold_1065.jsonl \
+  --output data/gold/physics_adjudicated_gold_1049.jsonl \
+  --exclude_reference_overlap \
   --skip_unrenderable
 ```
 
-当前 CSV 有 1 条纯图片且没有文本输入（ID `3659087300292263936`），因此当前文本模型的可评估 gold 集为 1,065 条。若后续接入视觉输入或从原始 JSON 补回可读文本，可重新纳入该题。
+当前 CSV 有 1 条纯图片且没有文本输入（ID `3659087300292263936`），另有 16 条与本轮 `train.jsonl` 重叠。因此当前文本模型的无训练泄漏复核集为 1,049 条。若后续接入视觉输入或从原始 JSON 补回可读文本，可重新纳入纯图片题；16 条重叠题只能用于训练集审计，不能进入最终留出集。
 
 ## 9. 模型选择与最终报告流程
 
@@ -344,7 +345,7 @@ phase_3_calibration:
 
 phase_4_final_reporting:
   teacher_fidelity: test.jsonl
-  business_gold: physics_adjudicated_gold_1065.jsonl
+  business_gold: physics_adjudicated_gold_1049.jsonl
   required_metrics:
     - strict accuracy
     - acceptable_level_accuracy（仅 gold）
