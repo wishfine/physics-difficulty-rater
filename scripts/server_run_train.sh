@@ -14,9 +14,18 @@ RESUME_ARGS=()
 if [ -n "$RESUME_CHECKPOINT" ]; then
   RESUME_ARGS=(--resume_from_checkpoint "$RESUME_CHECKPOINT")
 fi
-torchrun --nproc_per_node="$GPU_COUNT" train_difficulty.py \
-  --config "$CONFIG_FILE" \
-  --model_path "$MODEL_PATH" \
-  --train_file "$TRAIN_FILE" \
-  --output_dir "$OUTPUT_DIR" \
+TRAIN_ARGS=(
+  --config "$CONFIG_FILE"
+  --model_path "$MODEL_PATH"
+  --train_file "$TRAIN_FILE"
+  --output_dir "$OUTPUT_DIR"
   "${RESUME_ARGS[@]}"
+)
+
+# A one-GPU run does not need DDP. Avoiding torchrun here also prevents DDP
+# from treating externally-computed multi-task losses as unused parameters.
+if [ "$GPU_COUNT" -eq 1 ]; then
+  python train_difficulty.py "${TRAIN_ARGS[@]}"
+else
+  torchrun --nproc_per_node="$GPU_COUNT" train_difficulty.py "${TRAIN_ARGS[@]}"
+fi

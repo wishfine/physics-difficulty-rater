@@ -40,16 +40,17 @@ python scripts/oof_audit.py --input data/curated/split_v2/train.jsonl --output d
 ```bash
 nohup bash scripts/server_run_train.sh \
   /path/to/Qwen3.5-4B \
-  data/curated/teacher_v2.jsonl \
+  data/curated/split_v2_frozen18/train.jsonl \
   outputs/v2_baseline \
   configs/v2_teacher_train.json \
   > train_v2.log 2>&1 &
 ```
 
 Set `GPU_COUNT=2` before the command for two visible GPUs. Training does not
-run evaluation automatically. It saves a resumable checkpoint after every
-epoch. Resume an interrupted run by appending its checkpoint directory as the
-fifth positional argument to `server_run_train.sh`.
+run evaluation automatically. The default configuration saves a resumable
+checkpoint every 0.25 epoch and at every completed epoch. Resume an interrupted
+run by appending its checkpoint directory as the fifth positional argument to
+`server_run_train.sh`.
 
 ```bash
 python evaluate_difficulty.py \
