@@ -1,0 +1,14 @@
+{
+  "max_length": 1024,
+  "batch_size": 2,
+  "gradient_accumulation_steps": 4,
+  "learning_rate": 0.00002,
+  "num_train_epochs": 3,
+  "checkpoint_every_epochs": 0.25,
+  "log_every_optimizer_steps": 10,
+  "seed": 42,
+  "feature_loss_weight": 0.3,
+  "ordinal_loss_weight": 0.2,
+  "bf16": true,
+  "gradient_checkpointing": true
+}

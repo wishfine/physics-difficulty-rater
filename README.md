@@ -46,8 +46,9 @@ nohup bash scripts/server_run_train.sh \
   > train_v2.log 2>&1 &
 ```
 
-Set `GPU_COUNT=2` before the command for two visible GPUs. Training does not
-run evaluation automatically. The default configuration saves a resumable
+Set `GPU_COUNT=2` and use `configs/v2_teacher_train_2gpu.json` for two visible
+GPUs; it lowers gradient accumulation from 8 to 4 to preserve the one-GPU
+effective global batch size of 16. Training does not run evaluation automatically. The default configuration saves a resumable
 checkpoint every 0.25 epoch and at every completed epoch. Resume an interrupted
 run by appending its checkpoint directory as the fifth positional argument to
 `server_run_train.sh`.
