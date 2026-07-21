@@ -17,6 +17,10 @@ class DifficultyDataset(Dataset):
         self.items = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
         self.tokenizer, self.max_length, self.require_labels = tokenizer, max_length, require_labels
         self.tokenizer.padding_side = "right"
+        # Rendering with the section-aware truncator calls the tokenizer several
+        # times for long questions. Inputs are immutable within a run, so cache
+        # each rendered result and avoid repeating this CPU work every epoch.
+        self._render_cache: Dict[int, tuple[str, Dict[str, Any]]] = {}
         if require_labels:
             for item in self.items:
                 if "teacher_difficulty_id" not in item and "difficulty_id" not in item:
@@ -40,7 +44,14 @@ class DifficultyDataset(Dataset):
         return self.tokenizer.decode(tokens, skip_special_tokens=True), {"truncated": True, "original_token_count": token_count, "retained_token_count": self.max_length, "truncation_strategy_version": "legacy"}
 
     def collate_fn(self, batch: List[Dict[str, Any]]) -> Dict[str, Any]:
-        rendered = [self._render(item) for item in batch]
+        rendered = []
+        for item in batch:
+            cache_key = id(item)
+            cached = self._render_cache.get(cache_key)
+            if cached is None:
+                cached = self._render(item)
+                self._render_cache[cache_key] = cached
+            rendered.append(cached)
         encoded = self.tokenizer([item[0] for item in rendered], truncation=False, padding=True, return_tensors="pt")
         result = {
             **encoded,

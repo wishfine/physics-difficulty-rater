@@ -8,6 +8,7 @@ import math
 import os
 import random
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -40,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning_rate", type=float, default=2e-5)
     parser.add_argument("--num_train_epochs", type=int, default=3)
     parser.add_argument("--checkpoint_every_epochs", type=float, default=0.25)
+    parser.add_argument("--log_every_optimizer_steps", type=int, default=10)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--feature_loss_weight", type=float, default=0.3)
     parser.add_argument("--ordinal_loss_weight", type=float, default=0.2)
@@ -153,10 +155,13 @@ def main() -> None:
 
     if args.checkpoint_every_epochs <= 0:
         raise ValueError("checkpoint_every_epochs must be positive")
+    if args.log_every_optimizer_steps <= 0:
+        raise ValueError("log_every_optimizer_steps must be positive")
 
     dataset = DifficultyDataset(args.train_file, tokenizer, args.max_length)
     optimizer = torch.optim.AdamW([parameter for parameter in model.parameters() if parameter.requires_grad], lr=args.learning_rate, weight_decay=0.01)
-    micro_batches_per_epoch = math.ceil(len(dataset) / args.batch_size)
+    world_size = int(os.environ.get("WORLD_SIZE", "1")) if distributed else 1
+    micro_batches_per_epoch = math.ceil(len(dataset) / (args.batch_size * world_size))
     steps_per_epoch = max(1, math.ceil(micro_batches_per_epoch / args.gradient_accumulation_steps))
     total_steps = steps_per_epoch * args.num_train_epochs
     scheduler = get_linear_schedule_with_warmup(optimizer, int(0.1 * total_steps), total_steps)
@@ -178,7 +183,7 @@ def main() -> None:
         if not resume_dir:
             metrics_path.write_text("", encoding="utf-8")
         (output_dir / "training_config.json").write_text(json.dumps(vars(args), ensure_ascii=False, indent=2), encoding="utf-8")
-        print(json.dumps({"message": "Training reports loss only; run evaluate_difficulty.py separately for model selection.", "start_epoch": start_epoch, "resume_micro_step": resume_micro_step, "total_epochs": args.num_train_epochs, "checkpoint_every_epochs": args.checkpoint_every_epochs}, ensure_ascii=False), flush=True)
+        print(json.dumps({"message": "Training reports loss only; run evaluate_difficulty.py separately for model selection.", "start_epoch": start_epoch, "resume_micro_step": resume_micro_step, "total_epochs": args.num_train_epochs, "checkpoint_every_epochs": args.checkpoint_every_epochs, "optimizer_steps_per_epoch": steps_per_epoch}, ensure_ascii=False), flush=True)
 
     for epoch in range(start_epoch, args.num_train_epochs):
         loader, _ = make_epoch_loader(dataset, args, epoch, distributed)
@@ -190,6 +195,10 @@ def main() -> None:
         model.train()
         optimizer.zero_grad(set_to_none=True)
         accumulated_micro_steps = 0
+        last_log_time = time.perf_counter()
+        last_log_update = optimizer_updates_in_epoch
+        if main_process:
+            print(json.dumps({"message": "Starting epoch", "epoch": epoch + 1, "micro_batches": len(loader), "optimizer_steps": steps_per_epoch, "checkpoint_every_optimizer_steps": checkpoint_every_steps}, ensure_ascii=False), flush=True)
         for micro_step, batch in enumerate(loader, 1):
             if micro_step <= epoch_resume_micro_step:
                 continue
@@ -214,6 +223,18 @@ def main() -> None:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                 optimizer.step(); scheduler.step(); optimizer.zero_grad(set_to_none=True); optimizer_step += 1
                 optimizer_updates_in_epoch += 1
+                if main_process and optimizer_updates_in_epoch % args.log_every_optimizer_steps == 0:
+                    elapsed = max(time.perf_counter() - last_log_time, 1e-6)
+                    updates_since_log = optimizer_updates_in_epoch - last_log_update
+                    print(json.dumps({
+                        "epoch": epoch + 1,
+                        "epoch_progress": round(micro_step / len(loader), 4),
+                        "optimizer_step": optimizer_step,
+                        "last_loss": round(loss.item(), 6),
+                        "optimizer_updates_per_second": round(updates_since_log / elapsed, 4),
+                    }, ensure_ascii=False), flush=True)
+                    last_log_time = time.perf_counter()
+                    last_log_update = optimizer_updates_in_epoch
                 should_save_mid_epoch = (
                     optimizer_updates_in_epoch % checkpoint_every_steps == 0
                     and not is_last_micro_batch
