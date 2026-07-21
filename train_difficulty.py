@@ -88,10 +88,25 @@ def save_checkpoint(
     return checkpoint
 
 
-def make_epoch_loader(dataset: DifficultyDataset, args: argparse.Namespace, epoch: int, distributed: bool) -> tuple[DataLoader, object | None]:
+def make_epoch_loader(
+    dataset: DifficultyDataset,
+    args: argparse.Namespace,
+    epoch: int,
+    world_size: int,
+    global_rank: int,
+) -> tuple[DataLoader, object]:
     """Build a reproducibly shuffled loader so a mid-epoch resume sees the same batches."""
-    if distributed:
-        sampler: object | None = DistributedSampler(dataset, shuffle=True, seed=args.seed)
+    if world_size > 1:
+        # Pass rank/world size explicitly. Relying on DistributedSampler's
+        # implicit process-group lookup can silently give each rank the full
+        # dataset when launcher environment is unusual.
+        sampler: object = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=global_rank,
+            shuffle=True,
+            seed=args.seed,
+        )
         sampler.set_epoch(epoch)
         return DataLoader(dataset, batch_size=args.batch_size, sampler=sampler, collate_fn=dataset.collate_fn), sampler
     generator = torch.Generator()
@@ -111,11 +126,14 @@ def main() -> None:
     if distributed:
         torch.distributed.init_process_group("nccl")
         rank = int(os.environ["LOCAL_RANK"])
+        global_rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
         torch.cuda.set_device(rank)
         device = f"cuda:{rank}"
     else:
-        rank, device = 0, ("cuda" if torch.cuda.is_available() else "cpu")
-    main_process = not distributed or int(os.environ["RANK"]) == 0
+        rank, global_rank, world_size = 0, 0, 1
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    main_process = global_rank == 0
     output_dir = Path(args.output_dir)
     resume_dir = Path(args.resume_from_checkpoint) if args.resume_from_checkpoint else None
     if resume_dir and not (resume_dir / "trainer_state.json").is_file():
@@ -160,7 +178,6 @@ def main() -> None:
 
     dataset = DifficultyDataset(args.train_file, tokenizer, args.max_length)
     optimizer = torch.optim.AdamW([parameter for parameter in model.parameters() if parameter.requires_grad], lr=args.learning_rate, weight_decay=0.01)
-    world_size = int(os.environ.get("WORLD_SIZE", "1")) if distributed else 1
     micro_batches_per_epoch = math.ceil(len(dataset) / (args.batch_size * world_size))
     steps_per_epoch = max(1, math.ceil(micro_batches_per_epoch / args.gradient_accumulation_steps))
     total_steps = steps_per_epoch * args.num_train_epochs
@@ -186,7 +203,7 @@ def main() -> None:
         print(json.dumps({"message": "Training reports loss only; run evaluate_difficulty.py separately for model selection.", "start_epoch": start_epoch, "resume_micro_step": resume_micro_step, "total_epochs": args.num_train_epochs, "checkpoint_every_epochs": args.checkpoint_every_epochs, "optimizer_steps_per_epoch": steps_per_epoch}, ensure_ascii=False), flush=True)
 
     for epoch in range(start_epoch, args.num_train_epochs):
-        loader, _ = make_epoch_loader(dataset, args, epoch, distributed)
+        loader, _ = make_epoch_loader(dataset, args, epoch, world_size, global_rank)
         epoch_resume_micro_step = resume_micro_step if epoch == start_epoch else 0
         epoch_loss_sum = resumed_epoch_loss_sum if epoch == start_epoch else 0.0
         epoch_micro_steps = resumed_epoch_micro_steps if epoch == start_epoch else 0
@@ -198,7 +215,7 @@ def main() -> None:
         last_log_time = time.perf_counter()
         last_log_update = optimizer_updates_in_epoch
         if main_process:
-            print(json.dumps({"message": "Starting epoch", "epoch": epoch + 1, "micro_batches": len(loader), "optimizer_steps": steps_per_epoch, "checkpoint_every_optimizer_steps": checkpoint_every_steps}, ensure_ascii=False), flush=True)
+            print(json.dumps({"message": "Starting epoch", "epoch": epoch + 1, "world_size": world_size, "per_gpu_batch_size": args.batch_size, "gradient_accumulation_steps": args.gradient_accumulation_steps, "micro_batches": len(loader), "optimizer_steps": steps_per_epoch, "checkpoint_every_optimizer_steps": checkpoint_every_steps}, ensure_ascii=False), flush=True)
         for micro_step, batch in enumerate(loader, 1):
             if micro_step <= epoch_resume_micro_step:
                 continue
