@@ -13,8 +13,10 @@ from physics_difficulty.pairwise.cascade import (
     CascadeThresholds,
     decide_cascade_route,
     evaluate_cascade,
+    evaluate_human_audit,
     merge_vote_rows,
     select_blind_audit_pairs,
+    select_representative_audit_pairs,
     select_stratified_pairs,
     split_pairs_balanced,
 )
@@ -162,6 +164,124 @@ class CascadeTeacherTests(unittest.TestCase):
             self.assertNotIn("soft_target", serialized)
             self.assertNotIn("position_bias", serialized)
             self.assertNotIn("hard_disagreement", serialized)
+
+    def test_representative_audit_prefers_new_pairs_then_reuses_prior_labels_by_stratum(self):
+        rows = [pair(i) for i in range(9)]
+        evaluation = []
+        for index in range(9):
+            if index < 4:
+                route_action, hard_disagreement = "accept_nonthinking", False
+            elif index < 7:
+                route_action, hard_disagreement = "escalate_thinking_1024", False
+            else:
+                route_action, hard_disagreement = "escalate_thinking_1024", True
+            evaluation.append({
+                "pair_id": f"p{index:03d}",
+                "route_action": route_action,
+                "hard_disagreement": hard_disagreement,
+                "nonthinking_soft_target": 0.9,
+                "thinking_soft_target": 0.1,
+            })
+        prior = [
+            {"pair_id": "p001", "human_preference": "A", "human_confidence": "high", "human_notes": "old stable"},
+            {"pair_id": "p005", "human_preference": "B", "human_confidence": "medium", "human_notes": "old agree"},
+            {"pair_id": "p007", "human_preference": "tie", "human_confidence": "low", "human_notes": "old conflict"},
+        ]
+
+        blind, reused, manifest = select_representative_audit_pairs(
+            rows,
+            evaluation,
+            prior,
+            quotas={
+                "stable_and_decisive": 3,
+                "escalated_same_direction": 3,
+                "escalated_teacher_disagreement": 2,
+            },
+            seed=42,
+        )
+        self.assertEqual(len(blind), 6)
+        self.assertEqual(len(reused), 2)
+        self.assertEqual(manifest["selected_total"], 8)
+        self.assertEqual(manifest["new_total"], 6)
+        self.assertEqual(manifest["reused_total"], 2)
+        self.assertEqual(manifest["strata"]["stable_and_decisive"]["reused"], 0)
+        self.assertEqual(manifest["strata"]["escalated_same_direction"]["reused"], 1)
+        self.assertEqual(manifest["strata"]["escalated_teacher_disagreement"]["reused"], 1)
+        selected_ids = {row["pair_id"] for row in blind + reused}
+        self.assertEqual(len(selected_ids), 8)
+        for item in blind:
+            serialized = json.dumps(item, ensure_ascii=False)
+            self.assertIsNone(item["human_preference"])
+            self.assertNotIn("soft_target", serialized)
+            self.assertNotIn("route_action", serialized)
+            self.assertNotIn("hard_disagreement", serialized)
+
+        blind_again, reused_again, manifest_again = select_representative_audit_pairs(
+            list(reversed(rows)),
+            list(reversed(evaluation)),
+            list(reversed(prior)),
+            quotas={
+                "stable_and_decisive": 3,
+                "escalated_same_direction": 3,
+                "escalated_teacher_disagreement": 2,
+            },
+            seed=42,
+        )
+        self.assertEqual(blind, blind_again)
+        self.assertEqual(reused, reused_again)
+        self.assertEqual(manifest, manifest_again)
+
+    def test_human_audit_evaluation_excludes_human_ties_from_directional_accuracy(self):
+        evaluation = [
+            {
+                "pair_id": "p000", "route_action": "accept_nonthinking", "hard_disagreement": False,
+                "nonthinking_soft_target": 0.9, "thinking_soft_target": 0.8, "final_soft_target": 0.9,
+            },
+            {
+                "pair_id": "p001", "route_action": "escalate_thinking_1024", "hard_disagreement": True,
+                "nonthinking_soft_target": 0.8, "thinking_soft_target": 0.2, "final_soft_target": 0.2,
+            },
+            {
+                "pair_id": "p002", "route_action": "escalate_thinking_1024", "hard_disagreement": False,
+                "nonthinking_soft_target": 0.5, "thinking_soft_target": 0.2, "final_soft_target": 0.2,
+            },
+        ]
+        human = [
+            {"pair_id": "p000", "human_preference": "A", "human_confidence": "high"},
+            {"pair_id": "p001", "human_preference": "B", "human_confidence": "medium"},
+            {"pair_id": "p002", "human_preference": "tie", "human_confidence": "low"},
+        ]
+        report = evaluate_human_audit(evaluation, human)
+        self.assertEqual(report["human_records"], 3)
+        self.assertEqual(report["human_non_tie_records"], 2)
+        self.assertEqual(report["overall"]["nonthinking"]["correct"], 1)
+        self.assertEqual(report["overall"]["nonthinking"]["directional_accuracy"], 0.5)
+        self.assertEqual(report["overall"]["thinking_1024"]["directional_accuracy"], 1.0)
+        self.assertEqual(report["overall"]["cascade_final"]["directional_accuracy"], 1.0)
+        self.assertEqual(report["strata"]["stable_and_decisive"]["human_records"], 1)
+        self.assertEqual(report["strata"]["escalated_teacher_disagreement"]["human_records"], 1)
+
+    def test_human_audit_reports_stratum_coverage_and_population_weighted_estimate(self):
+        evaluation = [
+            {"pair_id": "p000", "route_action": "accept_nonthinking", "hard_disagreement": False,
+             "nonthinking_soft_target": 0.9, "thinking_soft_target": 0.9, "final_soft_target": 0.9},
+            {"pair_id": "p001", "route_action": "accept_nonthinking", "hard_disagreement": False,
+             "nonthinking_soft_target": 0.9, "thinking_soft_target": 0.9, "final_soft_target": 0.9},
+            {"pair_id": "p002", "route_action": "escalate_thinking_1024", "hard_disagreement": False,
+             "nonthinking_soft_target": 0.2, "thinking_soft_target": 0.2, "final_soft_target": 0.2},
+            {"pair_id": "p003", "route_action": "escalate_thinking_1024", "hard_disagreement": True,
+             "nonthinking_soft_target": 0.9, "thinking_soft_target": 0.2, "final_soft_target": 0.2},
+        ]
+        human = [
+            {"pair_id": "p000", "human_preference": "A", "human_confidence": "high"},
+            {"pair_id": "p002", "human_preference": "B", "human_confidence": "high"},
+            {"pair_id": "p003", "human_preference": "B", "human_confidence": "high"},
+        ]
+        report = evaluate_human_audit(evaluation, human)
+        self.assertEqual(report["population_stratum_counts"]["stable_and_decisive"], 2)
+        self.assertEqual(report["strata"]["stable_and_decisive"]["audit_coverage"], 0.5)
+        self.assertEqual(report["population_weighted_directional_accuracy"]["nonthinking"], 0.75)
+        self.assertEqual(report["population_weighted_directional_accuracy"]["cascade_final"], 1.0)
 
     def test_cascade_command_line_pipeline(self):
         rows = [pair(i, "random_global" if i % 2 else "lexical_near", "short", "medium" if i % 3 else "short") for i in range(12)]

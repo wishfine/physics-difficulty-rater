@@ -358,3 +358,229 @@ def select_blind_audit_pairs(
         "selection_reason_counts": dict(reason_counts),
         "predictions_in_blind_file": False,
     }
+
+
+REPRESENTATIVE_AUDIT_STRATA = (
+    "stable_and_decisive",
+    "escalated_same_direction",
+    "escalated_teacher_disagreement",
+)
+
+
+def _representative_audit_stratum(record: dict[str, Any]) -> str:
+    if record.get("route_action") == "accept_nonthinking":
+        return "stable_and_decisive"
+    if record.get("route_action") == "escalate_thinking_1024":
+        if bool(record.get("hard_disagreement")):
+            return "escalated_teacher_disagreement"
+        return "escalated_same_direction"
+    raise ValueError(f"unsupported cascade route action for pair {record.get('pair_id')}: {record.get('route_action')}")
+
+
+def _human_audit_row(pair: dict[str, Any], prior: dict[str, Any] | None = None) -> dict[str, Any]:
+    return {
+        "audit_index": None,
+        "pair_id": str(pair["pair_id"]),
+        "question_a_id": str(pair["question_a_id"]),
+        "question_b_id": str(pair["question_b_id"]),
+        "question_a_text": pair["question_a_text"],
+        "question_b_text": pair["question_b_text"],
+        "human_preference": prior.get("human_preference") if prior else None,
+        "human_confidence": prior.get("human_confidence") if prior else None,
+        "human_notes": str(prior.get("human_notes") or "") if prior else "",
+    }
+
+
+def select_representative_audit_pairs(
+    pairs: Sequence[dict[str, Any]],
+    evaluation_records: Sequence[dict[str, Any]],
+    prior_audit_rows: Sequence[dict[str, Any]],
+    quotas: dict[str, int],
+    seed: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Select a route-stratified audit, preferring unseen pairs over prior labels.
+
+    The returned blind rows intentionally omit teacher predictions and route strata.
+    Previously reviewed rows are returned separately with their human labels intact.
+    """
+    unknown_quotas = set(quotas) - set(REPRESENTATIVE_AUDIT_STRATA)
+    missing_quotas = set(REPRESENTATIVE_AUDIT_STRATA) - set(quotas)
+    if unknown_quotas or missing_quotas:
+        raise ValueError(f"quotas must contain exactly {REPRESENTATIVE_AUDIT_STRATA}")
+    if any(not isinstance(value, int) or value < 0 for value in quotas.values()):
+        raise ValueError("audit quotas must be non-negative integers")
+
+    by_id = {str(row.get("pair_id")): row for row in pairs}
+    if len(by_id) != len(pairs) or any(value in {"", "None"} for value in by_id):
+        raise ValueError("pair IDs must be present and unique")
+    records_by_id = {str(row.get("pair_id")): row for row in evaluation_records}
+    if len(records_by_id) != len(evaluation_records):
+        raise ValueError("evaluation pair IDs must be unique")
+    missing_pairs = sorted(set(records_by_id) - set(by_id))
+    if missing_pairs:
+        raise ValueError(f"evaluation contains {len(missing_pairs)} unknown pair IDs")
+
+    prior_by_id: dict[str, dict[str, Any]] = {}
+    for row in prior_audit_rows:
+        pair_id = str(row.get("pair_id"))
+        if pair_id in prior_by_id:
+            raise ValueError(f"duplicate prior audit pair ID: {pair_id}")
+        if pair_id not in by_id:
+            continue
+        if row.get("human_preference") not in {"A", "B", "tie"}:
+            raise ValueError(f"prior audit pair {pair_id} lacks a valid human preference")
+        prior_by_id[pair_id] = row
+
+    grouped: dict[str, list[str]] = {key: [] for key in REPRESENTATIVE_AUDIT_STRATA}
+    for pair_id, record in records_by_id.items():
+        grouped[_representative_audit_stratum(record)].append(pair_id)
+    for pair_ids in grouped.values():
+        pair_ids.sort(key=lambda pair_id: (stable_digest(seed, pair_id), pair_id))
+
+    new_rows: list[dict[str, Any]] = []
+    reused_rows: list[dict[str, Any]] = []
+    manifest_strata: dict[str, Any] = {}
+    selection_sequence: list[tuple[str, str, str]] = []
+    for stratum in REPRESENTATIVE_AUDIT_STRATA:
+        pair_ids = grouped[stratum]
+        quota = quotas[stratum]
+        if quota > len(pair_ids):
+            raise ValueError(f"requested {quota} rows from {stratum}, but only {len(pair_ids)} are available")
+        unseen = [pair_id for pair_id in pair_ids if pair_id not in prior_by_id]
+        reviewed = [pair_id for pair_id in pair_ids if pair_id in prior_by_id]
+        selected_new = unseen[:quota]
+        selected_reused = reviewed[: max(0, quota - len(selected_new))]
+        if len(selected_new) + len(selected_reused) != quota:
+            raise ValueError(f"could not satisfy audit quota for {stratum}")
+        for pair_id in selected_new:
+            new_rows.append(_human_audit_row(by_id[pair_id]))
+            selection_sequence.append((stratum, "new", pair_id))
+        for pair_id in selected_reused:
+            reused_rows.append(_human_audit_row(by_id[pair_id], prior_by_id[pair_id]))
+            selection_sequence.append((stratum, "reused", pair_id))
+        manifest_strata[stratum] = {
+            "requested": quota,
+            "available": len(pair_ids),
+            "new_available": len(unseen),
+            "prior_reviewed_available": len(reviewed),
+            "new": len(selected_new),
+            "reused": len(selected_reused),
+            "selected_pair_ids": selected_new + selected_reused,
+        }
+
+    new_rows.sort(key=lambda row: (stable_digest(seed, str(row["pair_id"])), str(row["pair_id"])))
+    reused_rows.sort(key=lambda row: (stable_digest(seed, str(row["pair_id"])), str(row["pair_id"])))
+    for index, row in enumerate(new_rows, 1):
+        row["audit_index"] = index
+    for index, row in enumerate(reused_rows, 1):
+        row["audit_index"] = index
+    return new_rows, reused_rows, {
+        "schema_version": "representative_pair_audit_selection_v1",
+        "seed": seed,
+        "requested_total": sum(quotas.values()),
+        "selected_total": len(new_rows) + len(reused_rows),
+        "new_total": len(new_rows),
+        "reused_total": len(reused_rows),
+        "strata": manifest_strata,
+        "selection_sequence": [
+            {"stratum": stratum, "label_source": source, "pair_id": pair_id}
+            for stratum, source, pair_id in selection_sequence
+        ],
+        "predictions_in_blind_file": False,
+    }
+
+
+def _audited_mode_metrics(rows: Sequence[dict[str, Any]], target_field: str) -> dict[str, Any]:
+    non_ties = [row for row in rows if row["human_preference"] in {"A", "B"}]
+    exact = [row for row in rows if hard_label(row.get(target_field)) == row["human_preference"]]
+    correct = [row for row in non_ties if hard_label(row.get(target_field)) == row["human_preference"]]
+    return {
+        "target_field": target_field,
+        "human_records": len(rows),
+        "human_non_tie_records": len(non_ties),
+        "teacher_predictions_available": sum(row.get(target_field) is not None for row in rows),
+        "correct": len(correct),
+        "directional_accuracy": len(correct) / len(non_ties) if non_ties else None,
+        "exact_three_way_agreement": len(exact) / len(rows) if rows else None,
+    }
+
+
+def _audited_slice(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "human_records": len(rows),
+        "human_non_tie_records": sum(row["human_preference"] in {"A", "B"} for row in rows),
+        "human_preference_counts": dict(Counter(str(row["human_preference"]) for row in rows)),
+        "human_confidence_counts": dict(Counter(str(row["human_confidence"]) for row in rows)),
+        "nonthinking": _audited_mode_metrics(rows, "nonthinking_soft_target"),
+        "thinking_1024": _audited_mode_metrics(rows, "thinking_soft_target"),
+        "cascade_final": _audited_mode_metrics(rows, "final_soft_target"),
+    }
+
+
+def evaluate_human_audit(
+    evaluation_records: Sequence[dict[str, Any]],
+    human_rows: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compare nonthinking, thinking and cascaded labels against a human audit."""
+    records_by_id = {str(row.get("pair_id")): row for row in evaluation_records}
+    if len(records_by_id) != len(evaluation_records):
+        raise ValueError("evaluation pair IDs must be unique")
+    human_by_id = {str(row.get("pair_id")): row for row in human_rows}
+    if len(human_by_id) != len(human_rows):
+        raise ValueError("human audit pair IDs must be unique")
+
+    joined: list[dict[str, Any]] = []
+    for pair_id, human in human_by_id.items():
+        if pair_id not in records_by_id:
+            raise ValueError(f"human audit contains unknown pair ID: {pair_id}")
+        if human.get("human_preference") not in {"A", "B", "tie"}:
+            raise ValueError(f"invalid human preference for pair {pair_id}")
+        if human.get("human_confidence") not in {"high", "medium", "low"}:
+            raise ValueError(f"invalid human confidence for pair {pair_id}")
+        joined.append({**records_by_id[pair_id], **human, "pair_id": pair_id})
+    joined.sort(key=lambda row: str(row["pair_id"]))
+
+    strata: dict[str, list[dict[str, Any]]] = {key: [] for key in REPRESENTATIVE_AUDIT_STRATA}
+    for row in joined:
+        strata[_representative_audit_stratum(row)].append(row)
+    population_counts = Counter(_representative_audit_stratum(row) for row in evaluation_records)
+    stratum_reports = {key: _audited_slice(strata[key]) for key in REPRESENTATIVE_AUDIT_STRATA}
+    for key, stratum_report in stratum_reports.items():
+        stratum_report["population_records"] = population_counts[key]
+        stratum_report["audit_coverage"] = (
+            stratum_report["human_records"] / population_counts[key]
+            if population_counts[key] else None
+        )
+    weighted: dict[str, float | None] = {}
+    for mode in ("nonthinking", "thinking_1024", "cascade_final"):
+        accuracies = [stratum_reports[key][mode]["directional_accuracy"] for key in REPRESENTATIVE_AUDIT_STRATA]
+        estimated_non_tie_counts = {
+            key: population_counts[key]
+            * stratum_reports[key]["human_non_tie_records"]
+            / stratum_reports[key]["human_records"]
+            if stratum_reports[key]["human_records"] else 0.0
+            for key in REPRESENTATIVE_AUDIT_STRATA
+        }
+        estimated_non_tie_total = sum(estimated_non_tie_counts.values())
+        if any(value is None for value in accuracies) or not estimated_non_tie_total:
+            weighted[mode] = None
+        else:
+            weighted[mode] = sum(
+                estimated_non_tie_counts[key] * float(stratum_reports[key][mode]["directional_accuracy"])
+                for key in REPRESENTATIVE_AUDIT_STRATA
+            ) / estimated_non_tie_total
+    confidence = {
+        level: _audited_slice([row for row in joined if row["human_confidence"] == level])
+        for level in ("high", "medium", "low")
+    }
+    return {
+        "schema_version": "human_pair_audit_evaluation_v1",
+        "human_records": len(joined),
+        "human_non_tie_records": sum(row["human_preference"] in {"A", "B"} for row in joined),
+        "population_records": len(evaluation_records),
+        "population_stratum_counts": {key: population_counts[key] for key in REPRESENTATIVE_AUDIT_STRATA},
+        "population_weighted_directional_accuracy": weighted,
+        "overall": _audited_slice(joined),
+        "confidence": confidence,
+        "strata": stratum_reports,
+    }

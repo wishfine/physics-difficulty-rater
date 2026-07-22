@@ -850,3 +850,75 @@ next_actions:
   - expand_if_passed: production_cascade_on_8000_pairs
   - then: train_soft_Bradley_Terry_student
 ```
+
+## 8. 200 对级联验证与人工审计结果
+
+```yaml
+date: 2026-07-22
+run: cascade_validation_200_v1
+teacher: Qwen3-32B
+population:
+  pairs: 200
+  stable_and_decisive: 117
+  escalated_same_direction: 21
+  escalated_teacher_disagreement: 62
+teacher_only_result:
+  direct_acceptance_rate: 0.585
+  accepted_hard_agreement_with_thinking: 0.9744
+  accepted_mean_absolute_soft_target_difference: 0.04057
+  accepted_severe_disagreement_count: 2
+  gate_status: PASS
+human_audit:
+  reviewer: Codex_single_review
+  unique_pairs: 129
+  non_tie_pairs: 121
+  high_confidence_pairs: 65
+  coverage:
+    stable_and_decisive: 46/117
+    escalated_same_direction: 21/21
+    escalated_teacher_disagreement: 62/62
+  population_weighted_directional_accuracy_estimate:
+    nonthinking: 0.6530
+    thinking_1024: 0.8177
+    cascade_final: 0.8578
+  high_confidence_directional_accuracy:
+    nonthinking: 0.5077
+    thinking_1024: 0.8462
+    cascade_final: 0.8769
+  by_route_stratum:
+    stable_and_decisive:
+      audited_non_tie: 45
+      nonthinking: 0.9556
+      thinking_1024: 0.8889
+      cascade_final: 0.9556
+    escalated_same_direction:
+      audited_non_tie: 18
+      nonthinking: 0.7778
+      thinking_1024: 0.7778
+      cascade_final: 0.7778
+    escalated_teacher_disagreement:
+      audited_non_tie: 58
+      nonthinking: 0.0172
+      thinking_1024: 0.6897
+      cascade_final: 0.6897
+```
+
+结论：当前 `nonthinking 筛选 + thinking_1024 升级` 路由得到支持。稳定且结论明确的
+题对上，nonthinking 不仅足够可靠，而且本次审计中优于 thinking；一旦两个 teacher 的
+硬方向冲突，nonthinking 几乎不可用，升级到 thinking 是必要的。按 200 对中三个路由层
+的真实占比和各层非平局率加权，cascade 比全量 thinking 高约 4.0 个百分点，同时只对 41.5% 的 pair
+运行 thinking。
+
+这里的 85.78% 是分层抽样后的点估计，不是严格总体真值：升级层已经全量审核，稳定层仅
+审核 46/117；所有标签均来自同一个 Codex reviewer，不是物理教研双人仲裁。进入 8000 对
+生产标注前，不需要继续修改已预注册阈值，但应从未审核的 71 个稳定题对中再随机抽取至少
+30 对，交由物理教研盲审，用来验证 95.56% 的稳定层准确率是否可复现。
+
+审计产物：
+
+```text
+log/cascade_validation_200_v1/evaluation/human_audit_codex_completed.jsonl
+log/cascade_validation_200_v1/evaluation/representative_audit_80/new_completed_codex.jsonl
+log/cascade_validation_200_v1/evaluation/cumulative_human_audit_129.jsonl
+log/cascade_validation_200_v1/evaluation/cumulative_human_audit_129_report.json
+```
