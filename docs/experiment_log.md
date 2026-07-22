@@ -449,6 +449,78 @@ cross_mode:
 按本次速度线性外推，8,000 pair 约需 87.5 个 GPU6/7 双卡墙钟小时，因此进入大规模生产前
 必须先做带人工判断的代表性小样本审计，并评估分层或级联标注以控制成本。
 
+#### 路由探索：文本长度与 nonthinking 可靠性
+
+使用相同 seed 和源文件在本机确定性还原 400 个 smoke candidates，20 个消融 pair 全部
+匹配。以渲染后题目文本字符数和数据自带长度桶分析，结果不支持“短题直接走
+nonthinking”的假设：
+
+```yaml
+route_hypothesis: short_pairs_use_nonthinking
+status: REJECTED_ON_CURRENT_SMOKE
+
+short_short:
+  pairs: 12
+  hard_agreement_with_thinking_1024: 0.6667
+  nonthinking_mean_position_bias_gap: 0.3396
+  nonthinking_high_position_bias_rate: 0.4167
+  mean_absolute_soft_target_difference: 0.1496
+
+short_medium:
+  pairs: 5
+  hard_agreement_with_thinking_1024: 1.0
+  nonthinking_mean_position_bias_gap: 0.1424
+  nonthinking_high_position_bias_rate: 0.20
+  mean_absolute_soft_target_difference: 0.0470
+
+medium_medium:
+  pairs: 3
+  hard_agreement_with_thinking_1024: 1.0
+  nonthinking_mean_position_bias_gap: 0.2424
+  nonthinking_high_position_bias_rate: 0.6667
+  mean_absolute_soft_target_difference: 0.1098
+```
+
+最大单题字符数阈值也未呈现单调收益：例如 `max_chars <= 403` 的 5 对题，方向一致率仅
+0.80，平均位置偏差为 0.542；`max_chars <= 842` 的 10 对题，方向一致率仍为 0.80，平均
+位置偏差为 0.308。文本短不等于比较简单；两个基础短题接近时，反而更容易受位置影响。
+
+#### 推荐探索：nonthinking 一阶段筛选 + thinking_1024 升级
+
+只使用 nonthinking 第一轮每方向 3 票进行离线回放，不追加 nonthinking 自适应票：
+
+```yaml
+stage_1:
+  mode: nonthinking
+  votes_per_direction: 3
+  accept_rule:
+    position_bias_gap: "<= 0.25"
+    soft_target: "< 0.30 or > 0.70"
+
+smoke_replay:
+  accepted_without_thinking: 14
+  escalated_to_thinking_1024: 6
+  accepted_coverage: 0.70
+  accepted_hard_agreement_with_thinking_1024: 1.0
+  accepted_mean_absolute_soft_target_difference: 0.05
+  escalated_share_of_observed_thinking_tokens: 0.3579
+
+strict_variant:
+  accept_rule:
+    position_bias_gap: 0.0
+    soft_target: "< 0.30 or > 0.70"
+  accepted_without_thinking: 9
+  accepted_coverage: 0.45
+  accepted_hard_agreement_with_thinking_1024: 1.0
+  accepted_mean_absolute_soft_target_difference: 0.0
+```
+
+这只是同一批 20 pair 上的回放，agreement 不是人工准确率，阈值也不能据此直接冻结。
+但它比长度路由更有依据，因为路由信号直接测量同一 pair 的方向稳定性和决策强度。按宽松
+规则和本次 Token 占比粗略外推，8,000 pair 使用 4 卡（两个 TP=2 实例）约需 17--20 小时，
+显著低于全量 `thinking_1024` 的约 44--50 小时。正式采用前应在新的 100--200 对代表性
+pair 上预注册阈值并复验，避免在这 20 对题上过拟合路由规则。
+
 ## 4. 必须记录的关键指标
 
 ### 4.1 Teacher 标注阶段
@@ -736,6 +808,7 @@ next_actions:
     purpose: measure_decisive_pair_accuracy_and_tie_handling
   - evaluate: staged_or_cascade_teacher_strategy
     purpose: reduce_thinking_1024_labeling_cost_without_accepting_nonthinking_position_bias
+    candidate_rule: nonthinking_3_votes_each_direction_then_escalate_unstable_or_uncertain_pairs
   - expand_if_passed: bounded_pairwise_pilot_before_8000_pairs
   - then: train_soft_Bradley_Terry_student
 ```
