@@ -260,6 +260,60 @@ comparison:
   file: .../comparison.json
 ```
 
+#### thinking_512 运行中快照（333 vote rows）
+
+```yaml
+snapshot_status: INTERIM_NOT_FINAL
+snapshot_received_at: 2026-07-22
+source: user_uploaded_thinking_512/raw_votes.jsonl
+rows: 333
+json_parse_errors: 0
+schema_version: qwen_pair_vote_v2
+teacher_mode: thinking_512
+effective_sampling_config:
+  enable_thinking: true
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  max_new_tokens: 512
+
+vote_quality:
+  valid_votes: 112
+  invalid_votes: 221
+  valid_rate: 0.336336
+  truncation_rate: 0.663664
+  finish_reason_length: 221
+  finish_reason_stop: 112
+  total_output_tokens: 158469
+  mean_output_tokens_all: 475.88
+  mean_output_tokens_valid: 404.62
+  invalid_output_tokens:
+    min: 512
+    median: 512
+    max: 512
+
+coverage_at_snapshot:
+  pairs: 20
+  pair_directions: 40
+  pair_directions_below_3_valid_votes: 13
+  pairs_with_both_directions_at_least_3_valid_votes: 10
+  pairs_aggregatable_with_at_least_1_valid_vote_each_direction: 18
+
+provisional_position_bias_on_18_aggregatable_pairs:
+  mean_gap: 0.0913
+  median_gap: 0.0417
+  max_gap: 0.7083
+  gap_above_0.15_count: 3
+  gap_above_0.30_count: 2
+  warning: uneven_and_incomplete_vote_counts_make_these_non_final
+```
+
+阶段性结论：全部 221 个无效输出都正好达到 512 Token，说明失败由思考内容截断主导，
+而不是 A/B 解析器随机漏判。示例 pair 在正序输出 A、反序输出 B，均还原到同一真实
+`question_id`，证明方向映射正确。`thinking_512` 不能作为正式 teacher 配置或训练标签来源；
+若要判断 thinking 本身是否有收益，需要继续运行 `thinking_1024`。不得从被截断的自然语言
+末尾猜测 A/B 并补票。
+
 ## 4. 必须记录的关键指标
 
 ### 4.1 Teacher 标注阶段
