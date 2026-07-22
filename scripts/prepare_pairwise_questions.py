@@ -107,7 +107,10 @@ def main() -> None:
                 continue
             stats["source_records"] += 1
             record = json.loads(line)
-            question_id = question_identifier(record, line_number)
+            try:
+                question_id = question_identifier(record)
+            except ValueError as error:
+                raise ValueError(f"line {line_number}: {error}") from error
             sections = normalized_sections(record)
             if sections:
                 clean_text = render_sections(sections)
@@ -128,7 +131,7 @@ def main() -> None:
             digest = sha256_text(rendered)
             item = {
                 "id": question_id,
-                "question_group_id": question_group_identifier(record, digest),
+                "question_group_id": question_group_identifier(record, question_id),
                 "split": args.split,
                 "text": rendered,
                 "text_sha256": digest,

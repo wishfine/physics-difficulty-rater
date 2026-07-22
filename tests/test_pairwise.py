@@ -8,7 +8,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from physics_difficulty.data.text_only import forbidden_source_label_paths, normalize_text_only
+from physics_difficulty.data.text_only import forbidden_source_label_paths, normalize_text_only, question_group_identifier, question_identifier
 from physics_difficulty.pairwise.labels import aggregate_pair_votes, pair_reliability, smoothed_probability
 from physics_difficulty.pairwise.metrics import graph_metrics, soft_pairwise_metrics
 
@@ -23,6 +23,13 @@ class PairwiseTests(unittest.TestCase):
     def test_forbidden_historical_label_is_found_recursively(self):
         row = {"metadata": {"source": {"difficulty": 4}}, "soft_target": 0.5}
         self.assertEqual(forbidden_source_label_paths(row), ["metadata.source.difficulty"])
+
+    def test_existing_question_id_is_preserved_and_never_invented(self):
+        self.assertEqual(question_identifier({"id": 123}), "123")
+        self.assertEqual(question_group_identifier({"parent_id": 99}, "123"), "99")
+        self.assertEqual(question_group_identifier({}, "123"), "123")
+        with self.assertRaises(ValueError):
+            question_identifier({"stem": "没有ID"})
 
     def test_bidirectional_votes_use_real_question_identity(self):
         def vote(direction, winner):

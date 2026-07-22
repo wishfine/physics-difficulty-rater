@@ -34,7 +34,7 @@ P(A 比 B 难) = sigmoid(s(A) - s(B))
 ```mermaid
 flowchart LR
     R["25k 原始/curated 题目"] --> N["纯文本规范化与泄漏检查"]
-    N --> S["按 question_group_id 固定 train/validation/test"]
+    N --> S["复用既有题目 ID 和 train/validation/test"]
     S --> G["各 split 内构造比较图"]
     G --> J["Qwen3-32B 正序+反序随机采样"]
     J --> A["按真实 question_id 聚合软概率"]
@@ -47,8 +47,10 @@ flowchart LR
 ```
 
 所有 pair 都只能在同一 split 内组成，严禁 train 题与 validation/test 题比较。
-父题及其小题必须通过 `question_group_id` 留在同一 split。现有 frozen18 split 已按
-组拆分，可复用；这里只把旧 teacher 档位当分层信息，不当监督。
+题目稳定 ID 和 frozen18 split 已经存在，V3 直接复用，不再建立、哈希或重映射题目
+ID。预处理遇到缺失 `id/question_id` 的记录会直接失败。已有 `question_group_id` 或
+`parent_id` 原样保留；独立题没有组字段时，仅用自身题目 ID 表示单题组。这里只把旧
+teacher 档位当分层信息，不当监督。
 
 ## 3. 文本准备
 

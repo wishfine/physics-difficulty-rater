@@ -56,14 +56,18 @@ def forbidden_source_label_paths(value: Any, prefix: str = "") -> List[str]:
     return findings
 
 
-def question_identifier(record: Dict[str, Any], fallback: int | str) -> str:
-    return str(record.get("id") or record.get("question_id") or fallback)
+def question_identifier(record: Dict[str, Any]) -> str:
+    """Return the existing stable ID; V3 must never invent a replacement."""
+    value = record.get("id") or record.get("question_id")
+    if value is None or not str(value).strip():
+        raise ValueError("question is missing its existing stable id/question_id")
+    return str(value)
 
 
-def question_group_identifier(record: Dict[str, Any], text_sha256: str) -> str:
-    source = str(record.get("source_dataset_id") or "unknown")
-    parent = record.get("parent_id") or record.get("question_group_id") or text_sha256
-    return f"{source}::{parent}"
+def question_group_identifier(record: Dict[str, Any], question_id: str) -> str:
+    """Reuse an existing grouping key; a standalone item groups with itself."""
+    value = record.get("question_group_id") or record.get("parent_id") or question_id
+    return str(value)
 
 
 def source_text(record: Dict[str, Any], formatter: Any) -> str:
