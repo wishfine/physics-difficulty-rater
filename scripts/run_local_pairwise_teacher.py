@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -102,6 +103,13 @@ def summarize_vote_rows(rows: Iterable[Dict[str, Any]], generation_seconds: floa
         "generation_wall_seconds": generation_seconds,
         "valid_votes_per_second": len(valid_rows) / generation_seconds if generation_seconds > 0 else None,
     }
+
+
+def configure_vllm_environment() -> None:
+    # FlashInfer 0.6.x JIT-compiles its sampler with the system nvcc.  The
+    # target server has a CUDA 12.9 PyTorch runtime but an older /usr/bin/nvcc,
+    # so use vLLM's supported native PyTorch sampler fallback by default.
+    os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 
 
 def desired_votes(stats: Dict[str, Any], initial: int, uncertain: int, maximum: int, uncertainty_low: float, uncertainty_high: float, medium_gap: float, high_gap: float) -> int:
@@ -202,6 +210,7 @@ def main() -> None:
         print(json.dumps(preview, ensure_ascii=False, indent=2))
         return
 
+    configure_vllm_environment()
     from vllm import LLM, SamplingParams
     llm = LLM(
         model=args.model_path,

@@ -12,6 +12,7 @@ OUTPUT_ROOT=$3
 MAX_PAIRS=${4:-20}
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export CUDA_VISIBLE_DEVICES=6,7
+export VLLM_USE_FLASHINFER_SAMPLER=0
 if [[ ! -f "$MODEL_PATH/config.json" ]]; then
   echo "Missing model config: $MODEL_PATH/config.json" >&2
   exit 1

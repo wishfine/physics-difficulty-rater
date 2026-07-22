@@ -209,6 +209,11 @@ nohup env CUDA_VISIBLE_DEVICES=6,7 \
   > "$ABLATION_ROOT/logs/ablation.log" 2>&1 &
 ```
 
+启动脚本同时设置 `VLLM_USE_FLASHINFER_SAMPLER=0`。服务器的 PyTorch CUDA runtime
+是 12.9，但系统 `/usr/bin/nvcc` 低于 CUDA 12，无法 JIT 编译 FlashInfer 0.6.x 的
+top-k/top-p sampler；关闭该 sampler 后由 vLLM 回退到原生 PyTorch 采样。FlashAttention
+和两卡张量并行不受影响。
+
 查看进度和最终报告：
 
 ```bash

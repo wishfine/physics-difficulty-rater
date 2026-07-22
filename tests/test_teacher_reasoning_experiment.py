@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,18 @@ def load_teacher_module():
 
 
 class TeacherReasoningExperimentTests(unittest.TestCase):
+    def test_vllm_environment_disables_flashinfer_sampler_by_default(self):
+        teacher = load_teacher_module()
+        previous = os.environ.pop("VLLM_USE_FLASHINFER_SAMPLER", None)
+        try:
+            teacher.configure_vllm_environment()
+            self.assertEqual(os.environ["VLLM_USE_FLASHINFER_SAMPLER"], "0")
+        finally:
+            if previous is None:
+                os.environ.pop("VLLM_USE_FLASHINFER_SAMPLER", None)
+            else:
+                os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = previous
+
     def test_final_vote_parser_accepts_reasoning_but_rejects_truncated_reasoning(self):
         teacher = load_teacher_module()
         self.assertEqual(teacher.parse_vote("<think>先比较建模过程</think>\nA"), "A")
