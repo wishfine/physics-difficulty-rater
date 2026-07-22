@@ -172,14 +172,63 @@ conda activate /data/$USER/conda_envs/physics-difficulty-vllm
 
 每个 pair 同时判断 `(A,B)` 和 `(B,A)`，并把位置字母还原为真实 question ID。
 默认每个顺序先采 3 次；软概率接近 0.5 或正反序不一致时自适应增加至 5 或 10
-次。原始输出 append 写入，可中断续跑。
+次。原始输出 append 写入，可中断续跑。`temperature` 不能设为 0，否则重复投票会退化成
+近乎相同的硬标签，不能估计偏好概率。
+
+先在同一批 20 个 smoke pair 上做 reasoning 消融，三组分别是：
+
+```text
+nonthinking:  thinking=false, max_new_tokens=4,    temperature=0.7, top_p=0.8
+thinking_512: thinking=true,  max_new_tokens=512,  temperature=0.6, top_p=0.95
+thinking_1024:thinking=true,  max_new_tokens=1024, temperature=0.6, top_p=0.95
+共同参数: top_k=20, min_p=0, 正反序各自适应采样 3/5/10 次
+```
+
+这里的 512/1024 是生成 Token 预算，不是 vLLM 的 `reasoning_effort=medium/high`；离线
+Qwen3 没有统一的低/中/高强度参数。三个模式必须使用各自独立的 raw vote 文件，禁止把
+不同温度、不同 thinking 模式的票混成一个 soft target。
+
+在服务器依次运行三组（同一时刻只加载一个 Qwen3-32B，固定占用物理 GPU 6、7）：
+
+```bash
+cd ~/physics-difficulty-rater
+git pull origin main
+conda activate /data/$USER/conda_envs/physics-difficulty-vllm
+
+PAIR_ROOT=/data/$USER/physics-difficulty-runtime/pairwise_v3
+TEACHER=/home/share_ssd_data/nfs-env/llm_models/Qwen/Qwen3-32B
+ABLATION_ROOT="$PAIR_ROOT/smoke/reasoning_ablation_20"
+mkdir -p "$ABLATION_ROOT/logs"
+
+nohup env CUDA_VISIBLE_DEVICES=6,7 \
+  bash scripts/server_run_teacher_reasoning_ablation.sh \
+  "$TEACHER" \
+  "$PAIR_ROOT/smoke/candidates.jsonl" \
+  "$ABLATION_ROOT" \
+  20 \
+  > "$ABLATION_ROOT/logs/ablation.log" 2>&1 &
+```
+
+查看进度和最终报告：
+
+```bash
+tail -f "$ABLATION_ROOT/logs/ablation.log"
+tail -f "$ABLATION_ROOT/logs/nonthinking.log"
+cat "$ABLATION_ROOT/comparison.json"
+```
+
+报告比较解析成功率、正反序位置偏差、模糊 pair 比例、平均输出 Token、有效票/秒和三个
+模式之间的 hard-label/soft-target 差异。跨模式一致不等于正确率；20 pair 只负责排除
+格式和成本明显不合格的模式。正式选择需要另抽人工复核 pair，比较人工 pairwise accuracy。
+
+如果只跑选定模式，仍可直接调用 teacher 脚本。例如非思考模式：
 
 ```bash
 TEACHER=/home/share_ssd_data/nfs-env/llm_models/实际的Qwen3-32B目录
 mkdir -p "$PAIR_ROOT/pilot/logs"
 
 nohup env CUDA_VISIBLE_DEVICES=6,7 python scripts/run_local_pairwise_teacher.py \
-  --config configs/qwen3_32b_pairwise_teacher.json \
+  --config configs/qwen3_32b_pairwise_teacher_nonthinking.json \
   --model-path "$TEACHER" \
   --pairs "$PAIR_ROOT/pilot/candidates.jsonl" \
   --raw-votes-output "$PAIR_ROOT/pilot/raw_votes.jsonl" \
@@ -190,9 +239,9 @@ nohup env CUDA_VISIBLE_DEVICES=6,7 python scripts/run_local_pairwise_teacher.py 
 这里调用的是 vLLM Python 离线引擎，不会监听端口。如果以后另行启动 OpenAI 兼容
 服务，应使用 `8002` 等未占用端口，避免与现有评测服务冲突。
 
-配置中的 `tensor_parallel_size=2` 对应两张可见 GPU。Prompt 只要求输出 A/B，且明确
-不能仅按题长、解析长、数字大小或机械步骤判断。默认关闭 thinking，减少格式错误和
-成本；温度必须大于 0，才能让多次采样形成概率而不是重复确定性答案。
+配置中的 `tensor_parallel_size=2` 对应两张可见 GPU。Prompt 只要求最终输出 A/B，且明确
+不能仅按题长、解析长、数字大小或机械步骤判断。思考模式会保留原始推理文本用于审计，
+但只有最后独立一行 A/B 才能解析为投票；因 Token 上限截断的输出一律作废。
 
 ## 6. 软标签聚合和清洗
 

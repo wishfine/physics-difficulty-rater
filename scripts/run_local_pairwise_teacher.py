@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable
@@ -33,7 +34,7 @@ USER_TEMPLATE = """请比较下面两道题对于初中学生独立解题时的�
 【题目B】
 {text_b}
 """
-FINAL_VOTE = re.compile(r"(?:^|\s)(A|B)\s*$", re.IGNORECASE)
+FINAL_VOTE = re.compile(r"(?:^|\n)\s*(?:(?:最终答案|答案)\s*[:：]?\s*)?(A|B)\s*[。.]?$", re.IGNORECASE)
 
 
 def load_jsonl(path: Path) -> list[Dict[str, Any]]:
@@ -86,6 +87,23 @@ def valid_count(rows: Iterable[Dict[str, Any]]) -> int:
     return sum(bool(row.get("valid")) for row in rows)
 
 
+def summarize_vote_rows(rows: Iterable[Dict[str, Any]], generation_seconds: float) -> Dict[str, Any]:
+    rows = list(rows)
+    valid_rows = [row for row in rows if row.get("valid")]
+    output_tokens = sum(int(row.get("output_token_count", 0) or 0) for row in rows)
+    valid_output_tokens = sum(int(row.get("output_token_count", 0) or 0) for row in valid_rows)
+    return {
+        "total_vote_rows": len(rows),
+        "valid_votes": len(valid_rows),
+        "parse_success_rate": len(valid_rows) / max(1, len(rows)),
+        "output_tokens": output_tokens,
+        "valid_output_tokens": valid_output_tokens,
+        "mean_output_tokens_per_valid_vote": valid_output_tokens / max(1, len(valid_rows)),
+        "generation_wall_seconds": generation_seconds,
+        "valid_votes_per_second": len(valid_rows) / generation_seconds if generation_seconds > 0 else None,
+    }
+
+
 def desired_votes(stats: Dict[str, Any], initial: int, uncertain: int, maximum: int, uncertainty_low: float, uncertainty_high: float, medium_gap: float, high_gap: float) -> int:
     target = float(stats["soft_target"])
     gap = float(stats["position_bias_gap"])
@@ -125,8 +143,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--high-position-gap", type=float, default=0.30)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--min-p", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=4)
     parser.add_argument("--enable-thinking", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--mode-name", default="nonthinking")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pairs", type=int)
     parser.add_argument("--dry-run", action="store_true")
@@ -137,6 +158,10 @@ def main() -> None:
     args = parse_args()
     if not 0 < args.temperature or not 0 < args.top_p <= 1:
         raise ValueError("stochastic voting requires temperature > 0 and top-p in (0, 1]")
+    if args.top_k < -1 or not 0 <= args.min_p <= 1:
+        raise ValueError("top-k must be -1 or non-negative and min-p must be in [0, 1]")
+    if args.enable_thinking and args.max_new_tokens < 64:
+        raise ValueError("thinking mode requires max-new-tokens >= 64 to reduce truncated votes")
     if not 1 <= args.initial_samples_per_direction <= args.uncertain_samples_per_direction <= args.maximum_samples_per_direction:
         raise ValueError("sample counts must satisfy initial <= uncertain <= maximum")
     if not 0 <= args.uncertainty_low <= args.uncertainty_high <= 0.5:
@@ -170,6 +195,8 @@ def main() -> None:
             "pair_id": pairs[0]["pair_id"],
             "forward_prompt": build_prompt(tokenizer, pairs[0], "forward", args.enable_thinking),
             "backward_prompt": build_prompt(tokenizer, pairs[0], "backward", args.enable_thinking),
+            "teacher_mode": args.mode_name,
+            "sampling": {"temperature": args.temperature, "top_p": args.top_p, "top_k": args.top_k, "min_p": args.min_p, "max_new_tokens": args.max_new_tokens},
             "config_hash": config_hash(args),
         }
         print(json.dumps(preview, ensure_ascii=False, indent=2))
@@ -187,6 +214,7 @@ def main() -> None:
     )
 
     generated_rows = 0
+    new_generation_seconds = 0.0
     # Continue with a fresh sampling seed after interruption; otherwise an
     # invalid stochastic output could be reproduced forever on every restart.
     round_index = max((int(row.get("sampling_round", 0)) for row in existing_rows), default=0)
@@ -238,10 +266,14 @@ def main() -> None:
                     n=generation_count,
                     temperature=args.temperature,
                     top_p=args.top_p,
+                    top_k=args.top_k,
+                    min_p=args.min_p,
                     max_tokens=args.max_new_tokens,
                     seed=args.seed + round_index,
                 )
+                generation_started = time.perf_counter()
                 responses = llm.generate(prompts, sampling, use_tqdm=True)
+                new_generation_seconds += time.perf_counter() - generation_started
                 if len(responses) != len(batch):
                     raise RuntimeError("vLLM returned a different number of prompt responses")
                 with raw_path.open("a", encoding="utf-8") as target:
@@ -252,8 +284,11 @@ def main() -> None:
                         for offset, candidate in enumerate(response.outputs):
                             raw_output = candidate.text
                             vote = parse_vote(raw_output)
+                            finish_reason = getattr(candidate, "finish_reason", None)
+                            output_token_count = len(getattr(candidate, "token_ids", []) or [])
+                            valid = vote is not None and finish_reason != "length"
                             row = {
-                                "schema_version": "qwen_pair_vote_v1",
+                                "schema_version": "qwen_pair_vote_v2",
                                 "pair_id": pair_id,
                                 "split": pair["split"],
                                 "question_a_id": str(pair["question_a_id"]),
@@ -265,14 +300,21 @@ def main() -> None:
                                 "run_config_hash": current_config_hash,
                                 "raw_output": raw_output,
                                 "parsed_vote": vote,
-                                "winner_question_id": winner_from_position(pair, direction, vote),
-                                "valid": vote is not None,
+                                "winner_question_id": winner_from_position(pair, direction, vote) if valid else None,
+                                "valid": valid,
+                                "output_token_count": output_token_count,
+                                "finish_reason": finish_reason,
+                                "stop_reason": getattr(candidate, "stop_reason", None),
                                 "teacher": {
                                     "model": "Qwen3-32B",
                                     "model_path": str(Path(args.model_path).resolve()),
+                                    "mode": args.mode_name,
                                     "prompt_version": VOTE_PROMPT_VERSION,
                                     "temperature": args.temperature,
                                     "top_p": args.top_p,
+                                    "top_k": args.top_k,
+                                    "min_p": args.min_p,
+                                    "max_new_tokens": args.max_new_tokens,
                                     "thinking": args.enable_thinking,
                                 },
                             }
@@ -283,30 +325,33 @@ def main() -> None:
         print(json.dumps({"message": "teacher_sampling_round_complete", "round": round_index, "generated_votes": generated_rows, "remaining_pairs_to_check": len(pairs)}, ensure_ascii=False), flush=True)
 
     all_rows = [row for directions in grouped.values() for rows in directions.values() for row in rows]
-    valid_rows = [row for row in all_rows if row.get("valid")]
+    previous_manifest_path = Path(args.manifest)
+    previous_manifest = json.loads(previous_manifest_path.read_text(encoding="utf-8")) if previous_manifest_path.is_file() else {}
+    previous_seconds = float(previous_manifest.get("generation_wall_seconds", 0.0) or 0.0) if previous_manifest.get("config_hash") == current_config_hash else 0.0
+    vote_summary = summarize_vote_rows(all_rows, previous_seconds + new_generation_seconds)
     completed = 0
     for pair_id in pair_by_id:
         directions = grouped[pair_id]
         if valid_count(directions.get("forward", [])) >= args.initial_samples_per_direction and valid_count(directions.get("backward", [])) >= args.initial_samples_per_direction:
             completed += 1
     manifest = {
-        "schema_version": "local_pairwise_teacher_run_v1",
+        "schema_version": "local_pairwise_teacher_run_v2",
         "pairs": str(Path(args.pairs).resolve()),
         "raw_votes_output": str(raw_path.resolve()),
         "teacher_model_path": str(Path(args.model_path).resolve()),
         "prompt_version": VOTE_PROMPT_VERSION,
+        "teacher_mode": args.mode_name,
         "config_hash": current_config_hash,
         "images_uploaded": False,
         "pairs_requested": len(pairs),
         "pairs_completed_minimum": completed,
-        "total_vote_rows": len(all_rows),
-        "valid_votes": len(valid_rows),
-        "parse_success_rate": len(valid_rows) / max(1, len(all_rows)),
+        **vote_summary,
         "new_votes_generated": generated_rows,
+        "new_generation_wall_seconds": new_generation_seconds,
         "warnings": warnings,
         "config": vars(args),
     }
-    manifest_path = Path(args.manifest)
+    manifest_path = previous_manifest_path
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
