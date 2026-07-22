@@ -123,12 +123,21 @@ find /home/share_ssd_data/nfs-env/llm_models -maxdepth 2 \
 ```
 
 把命令输出的实际路径赋给 `TEACHER`；配置文件故意不猜子目录名，避免加载错模型。
-teacher 使用 vLLM 离线推理，不调用 API。需要额外依赖时装到可写环境，不装系统
-Python：
+teacher 使用 vLLM 离线推理，不调用 API。
+
+不要直接复用或改动 Vime 训练环境，也不要对已经验证的 CUDA 栈执行 `pip install
+vllm`。首次运行下面的幂等脚本：它只把已验证环境克隆到本项目在 `/data` 下的独立
+prefix，然后从克隆中卸载 Vime 自身的 Python 包；源环境不受影响：
 
 ```bash
-pip install -r requirements-teacher.txt
+bash scripts/bootstrap_teacher_env.sh
+conda activate /data/$USER/conda_envs/physics-difficulty-vllm
 ```
+
+脚本保留已存在的目标环境而不覆盖，并验证：Python 3.11、
+`torch 2.11.0+cu129`、`vLLM 0.24.0+cu129`。conda explicit manifest 和 pip freeze
+写入 `/data/$USER/physics-difficulty-runtime/env_manifests/`。如果任一版本不符，脚本
+直接失败，不能继续 teacher pilot。
 
 每个 pair 同时判断 `(A,B)` 和 `(B,A)`，并把位置字母还原为真实 question ID。
 默认每个顺序先采 3 次；软概率接近 0.5 或正反序不一致时自适应增加至 5 或 10
@@ -146,6 +155,9 @@ nohup env CUDA_VISIBLE_DEVICES=6,7 python scripts/run_local_pairwise_teacher.py 
   --manifest "$PAIR_ROOT/pilot/teacher.manifest.json" \
   > "$PAIR_ROOT/pilot/logs/teacher.log" 2>&1 &
 ```
+
+这里调用的是 vLLM Python 离线引擎，不会监听端口。如果以后另行启动 OpenAI 兼容
+服务，应使用 `8002` 等未占用端口，避免与现有评测服务冲突。
 
 配置中的 `tensor_parallel_size=2` 对应两张可见 GPU。Prompt 只要求输出 A/B，且明确
 不能仅按题长、解析长、数字大小或机械步骤判断。默认关闭 thinking，减少格式错误和

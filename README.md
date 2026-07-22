@@ -10,10 +10,11 @@ derived into the non-training `feature_metadata.knowledge_domains` field.
 
 ## Environment
 
-Reuse the server's existing `QuRater` conda environment first.  This project
-uses the same GPU stack (PyTorch, Transformers, PEFT, Accelerate) and Qwen
-base model, but keeps code, outputs, and dependency documentation separate.
-No local model/runtime is required on the Mac.
+Reuse the server's existing `QuRater` environment only for Qwen3.5-4B student
+training. The Qwen3-32B local teacher uses an independent project-owned clone
+at `/data/$USER/conda_envs/physics-difficulty-vllm`; it does not run inside or
+modify the Vime training environment. See the V3 guide for the idempotent
+bootstrap command. No local model/runtime is required on the Mac.
 
 ## Data contract
 

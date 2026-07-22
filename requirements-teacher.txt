@@ -1,3 +1,0 @@
-# Install only in the server-side local-teacher environment.
-vllm
-transformers
