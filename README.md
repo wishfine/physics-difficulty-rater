@@ -143,6 +143,12 @@ It writes a blind human-audit file without teacher predictions. Do not route by
 text length alone; the smoke showed that short pairs can be more position
 sensitive than mixed-length pairs.
 
+After validation passes, use `server_run_cascade_production.sh` for the complete
+8000-pair pilot graph. It screens every pair with six nonthinking votes, runs
+`thinking_1024` only for escalated pairs, then writes curated soft
+Bradley-Terry records to `final/train_pairs.jsonl`. Raw vote files are
+append-only and resumable.
+
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
 calibration procedure.

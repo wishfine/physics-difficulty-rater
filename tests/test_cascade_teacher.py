@@ -357,6 +357,16 @@ class CascadeTeacherTests(unittest.TestCase):
         self.assertIn("MODEL_PATH", result.stderr)
         self.assertIn("GPU_PAIR_1", result.stderr)
 
+    def test_server_production_wrapper_has_safe_usage_boundary(self):
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "server_run_cascade_production.sh")],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("PAIRS_FILE", result.stderr)
+        self.assertIn("QUESTIONS_FILE", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
