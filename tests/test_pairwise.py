@@ -1,3 +1,4 @@
+import hashlib
 import json
 import subprocess
 import sys
@@ -76,10 +77,32 @@ class PairwiseTests(unittest.TestCase):
                 {"kind": "parent_题干", "title": "【题干】", "text": "小球做匀速直线运动。", "required": True},
                 {"kind": "parent_解析", "title": "【解析】", "text": "速度保持不变。", "required": False},
             ],
+            "input_sha256": hashlib.sha256("【题干】\n小球做匀速直线运动。\n\n【解析】\n速度保持不变。".encode("utf-8")).hexdigest(),
+            "parent_id": "q1",
+            "source_dataset_id": "physics",
             "teacher_difficulty_id": 1,
             "teacher_difficulty_level": "基础题",
+            "teacher_features": {key: "x" for key in (
+                "calculation_complexity", "constraint_count", "information_processing",
+                "knowledge_count", "problem_structure", "reasoning_chain", "state_count",
+                "step_count", "subquestion_dependency", "variable_relation",
+            )},
+            "teacher_features_legacy18": {key: "x" for key in (
+                "additional_structure", "calculation_complexity", "constraint_count",
+                "cross_module", "error_risk", "experiment_requirement", "formula_count",
+                "graph_table_requirement", "information_carrier", "knowledge_count",
+                "knowledge_diff", "problem_structure", "reality_question", "reasoning_chain",
+                "state_count", "step_count", "subquestion_dependency", "variable_relation",
+            )},
             "feature_metadata": {"knowledge_domains": ["力学"], "difficulty": 5},
             "diagnostics": {"has_image_url": True, "raw_difficulty": 4},
+            "feature_schema_version": "v2_frozen18",
+            "label_schema_version": "v2_frozen18",
+            "label_source": "api_v7_frozen18",
+            "prompt_version": "frozen_physics_prompt",
+            "postprocess_version": "v7",
+            "teacher_model": "current_physics_api",
+            "label_quality": {"sample_weight": 0.7},
         }
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -94,6 +117,7 @@ class PairwiseTests(unittest.TestCase):
             prepared = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(forbidden_source_label_paths(prepared), [])
             self.assertEqual(prepared["teacher_difficulty_id"], 1)
+            self.assertNotIn("teacher_difficulty_level", prepared)
             self.assertEqual(prepared["feature_metadata"], {"knowledge_domains": ["力学"]})
             self.assertTrue(prepared["diagnostics"]["has_image"])
             self.assertFalse(prepared["diagnostics"]["images_uploaded"])
@@ -110,7 +134,7 @@ class PairwiseTests(unittest.TestCase):
                 "--manifest", str(directory / "manifest.json"), "--split", "train",
             ], capture_output=True, text=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("prepared_v2 input is missing canonical text", result.stderr)
+            self.assertIn("frozen18 input is missing fields", result.stderr)
 
     def test_candidate_vote_aggregate_validate_smoke_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:

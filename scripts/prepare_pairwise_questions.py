@@ -17,6 +17,27 @@ from physics_difficulty.data.formatting import canonical_sections, format_questi
 from physics_difficulty.data.text_only import leakage_findings, normalize_text_only, question_group_identifier, question_identifier, source_text
 from physics_difficulty.data.truncation import render_with_token_budget
 
+FROZEN18_REQUIRED_TOP_LEVEL = {
+    "diagnostics", "feature_metadata", "feature_schema_version", "id",
+    "input_sections", "input_sha256", "label_quality", "label_schema_version",
+    "label_source", "parent_id", "postprocess_version", "prompt_version",
+    "raw_difficulty", "source_dataset_id", "teacher_difficulty_id",
+    "teacher_difficulty_level", "teacher_features", "teacher_features_legacy18",
+    "teacher_model", "text",
+}
+V2_FEATURE_KEYS = {
+    "calculation_complexity", "constraint_count", "information_processing",
+    "knowledge_count", "problem_structure", "reasoning_chain", "state_count",
+    "step_count", "subquestion_dependency", "variable_relation",
+}
+LEGACY18_FEATURE_KEYS = {
+    "additional_structure", "calculation_complexity", "constraint_count",
+    "cross_module", "error_risk", "experiment_requirement", "formula_count",
+    "graph_table_requirement", "information_carrier", "knowledge_count",
+    "knowledge_diff", "problem_structure", "reality_question", "reasoning_chain",
+    "state_count", "step_count", "subquestion_dependency", "variable_relation",
+}
+
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -75,12 +96,24 @@ def safe_feature_metadata(record: Dict[str, Any]) -> Dict[str, Any]:
     return {"knowledge_domains": [str(value) for value in domains if str(value).strip()]}
 
 
-def validate_prepared_v2(record: Dict[str, Any], line_number: int) -> None:
-    """Require the already-prepared 25k contract, not the original raw JSONL."""
-    if not str(record.get("text") or "").strip():
-        raise ValueError(f"line {line_number}: prepared_v2 input is missing canonical text")
+def validate_frozen18(record: Dict[str, Any], line_number: int) -> None:
+    """Require the exact already-prepared 25k contract observed on the server."""
+    missing = FROZEN18_REQUIRED_TOP_LEVEL - set(record)
+    if missing:
+        raise ValueError(f"line {line_number}: frozen18 input is missing fields {sorted(missing)}")
+    if not str(record["text"]).strip():
+        raise ValueError(f"line {line_number}: frozen18 input has empty canonical text")
     if not isinstance(record.get("input_sections"), list) or not record["input_sections"]:
-        raise ValueError(f"line {line_number}: prepared_v2 input is missing input_sections")
+        raise ValueError(f"line {line_number}: frozen18 input is missing input_sections")
+    for field, required in (("teacher_features", V2_FEATURE_KEYS), ("teacher_features_legacy18", LEGACY18_FEATURE_KEYS)):
+        value = record.get(field)
+        if not isinstance(value, dict) or required - set(value):
+            raise ValueError(f"line {line_number}: {field} does not match the frozen schema")
+    teacher_id = record["teacher_difficulty_id"]
+    if type(teacher_id) is not int or not 0 <= teacher_id <= 4:
+        raise ValueError(f"line {line_number}: invalid teacher_difficulty_id")
+    if sha256_text(record["text"]) != str(record["input_sha256"]):
+        raise ValueError(f"line {line_number}: input_sha256 does not match canonical text")
 
 
 def main() -> None:
@@ -90,7 +123,7 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--quarantine-output")
     parser.add_argument("--split", required=True, choices=["train", "validation", "test", "pilot", "reference"])
-    parser.add_argument("--input-contract", choices=["prepared_v2", "canonical_raw"], default="prepared_v2")
+    parser.add_argument("--input-contract", choices=["frozen18", "canonical_raw"], default="frozen18")
     parser.add_argument("--student-tokenizer-path")
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--allow-label-leakage", action="store_true")
@@ -116,14 +149,14 @@ def main() -> None:
                 continue
             stats["source_records"] += 1
             record = json.loads(line)
-            if args.input_contract == "prepared_v2":
-                validate_prepared_v2(record, line_number)
+            if args.input_contract == "frozen18":
+                validate_frozen18(record, line_number)
             try:
                 question_id = question_identifier(record)
             except ValueError as error:
                 raise ValueError(f"line {line_number}: {error}") from error
             sections = normalized_sections(record)
-            if args.input_contract == "prepared_v2":
+            if args.input_contract == "frozen18":
                 clean_text = normalize_text_only(record["text"])
                 section_text = normalize_text_only(render_sections(sections))
                 if clean_text != section_text:
@@ -154,7 +187,6 @@ def main() -> None:
                 "text_schema_version": "text_only_v1",
                 "source_line": line_number,
                 "teacher_difficulty_id": record.get("teacher_difficulty_id"),
-                "teacher_difficulty_level": record.get("teacher_difficulty_level"),
                 # The old API label is retained only as a candidate-sampling
                 # stratum. It is never shown to the judge or student model.
                 "feature_metadata": safe_feature_metadata(record),
@@ -164,8 +196,20 @@ def main() -> None:
                 "diagnostics": {
                     "has_image": bool((record.get("diagnostics") or {}).get("has_image_url")),
                     "images_uploaded": False,
+                    "source_input_sha256_verified": args.input_contract == "frozen18",
                     "label_leakage_findings": findings,
                     "truncation": truncation,
+                },
+                "source_provenance": {
+                    "source_dataset_id": record.get("source_dataset_id"),
+                    "parent_id": record.get("parent_id"),
+                    "input_sha256": record.get("input_sha256"),
+                    "feature_schema_version": record.get("feature_schema_version"),
+                    "label_schema_version": record.get("label_schema_version"),
+                    "label_source": record.get("label_source"),
+                    "prompt_version": record.get("prompt_version"),
+                    "postprocess_version": record.get("postprocess_version"),
+                    "teacher_model": record.get("teacher_model"),
                 },
             }
             if question_id in seen_ids:

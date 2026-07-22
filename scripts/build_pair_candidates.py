@@ -132,6 +132,10 @@ def make_pair(left: Dict[str, Any], right: Dict[str, Any], source: str, split: s
             "has_image_b": bool((right.get("diagnostics") or {}).get("has_image")),
             "truncated_a": bool(((left.get("diagnostics") or {}).get("truncation") or {}).get("truncated")),
             "truncated_b": bool(((right.get("diagnostics") or {}).get("truncation") or {}).get("truncated")),
+            "source_dataset_a": (left.get("source_provenance") or {}).get("source_dataset_id"),
+            "source_dataset_b": (right.get("source_provenance") or {}).get("source_dataset_id"),
+            "source_input_sha256_a": (left.get("source_provenance") or {}).get("input_sha256"),
+            "source_input_sha256_b": (right.get("source_provenance") or {}).get("input_sha256"),
         },
     }
 
