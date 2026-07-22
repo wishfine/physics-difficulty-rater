@@ -101,3 +101,20 @@ confidence and fallback reasons:
 python calibrate_difficulty.py --model_path /path/to/Qwen3.5-4B --checkpoint_dir outputs/v2_baseline/checkpoint-epoch-3 --validation_file data/curated/split_v2/validation.jsonl
 python predict_difficulty.py --model_path /path/to/Qwen3.5-4B --checkpoint_dir outputs/v2_baseline/checkpoint-epoch-3 --input_file incoming.jsonl --output_file predictions.jsonl
 ```
+
+## V3: QuRating-style pairwise difficulty
+
+V3 is the preferred experimental route. A local Qwen3-32B judge compares two
+text-only questions in both orders; a Qwen3.5-4B LoRA student learns one scalar
+score with a soft Bradley-Terry loss. It does not train the old ten feature
+heads and does not apply feature-based hard rules after prediction.
+
+The historical source field named `difficulty` (and prepared
+`raw_difficulty`) is known to be wrong. V3 rejects it recursively and never
+uses it in a prompt, target, calibration, or metric. The former API+V7
+`teacher_difficulty_id`, when present, is only a hidden sampling stratum for
+constructing a diverse graph. It is not pairwise supervision.
+
+See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
+pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
+calibration procedure.

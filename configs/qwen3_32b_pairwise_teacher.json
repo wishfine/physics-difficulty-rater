@@ -1,0 +1,18 @@
+{
+  "tensor_parallel_size": 2,
+  "dtype": "bfloat16",
+  "gpu_memory_utilization": 0.9,
+  "batch_size": 64,
+  "initial_samples_per_direction": 3,
+  "uncertain_samples_per_direction": 5,
+  "maximum_samples_per_direction": 10,
+  "uncertainty_low": 0.3,
+  "uncertainty_high": 0.4,
+  "medium_position_gap": 0.15,
+  "high_position_gap": 0.3,
+  "temperature": 0.7,
+  "top_p": 0.9,
+  "max_new_tokens": 4,
+  "enable_thinking": false,
+  "seed": 42
+}

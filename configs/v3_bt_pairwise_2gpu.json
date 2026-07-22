@@ -1,0 +1,19 @@
+{
+  "max_length": 1024,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 16,
+  "learning_rate": 0.00002,
+  "head_learning_rate": 0.0001,
+  "weight_decay": 0.01,
+  "warmup_ratio": 0.05,
+  "num_train_epochs": 3,
+  "checkpoint_every_epochs": 0.25,
+  "log_every_optimizer_steps": 10,
+  "lora_r": 8,
+  "lora_alpha": 16,
+  "lora_dropout": 0.05,
+  "score_regularization_weight": 0.0001,
+  "seed": 42,
+  "bf16": true,
+  "gradient_checkpointing": true
+}

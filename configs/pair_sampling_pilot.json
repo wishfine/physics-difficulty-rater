@@ -1,0 +1,7 @@
+{
+  "seed": 42,
+  "max_questions": 2000,
+  "target_pairs": 8000,
+  "minimum_degree": 4,
+  "maximum_degree": 12
+}

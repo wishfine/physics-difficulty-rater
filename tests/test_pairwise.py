@@ -1,0 +1,143 @@
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from physics_difficulty.data.text_only import forbidden_source_label_paths, normalize_text_only
+from physics_difficulty.pairwise.labels import aggregate_pair_votes, pair_reliability, smoothed_probability
+from physics_difficulty.pairwise.metrics import graph_metrics, soft_pairwise_metrics
+
+
+class PairwiseTests(unittest.TestCase):
+    def test_text_only_removes_image_payloads(self):
+        text = "题干 ![图](https://example/a.png) <img src='x'> 【图片】 结尾"
+        normalized = normalize_text_only(text)
+        self.assertEqual(normalized, "题干 结尾")
+        self.assertNotIn("http", normalized)
+
+    def test_forbidden_historical_label_is_found_recursively(self):
+        row = {"metadata": {"source": {"difficulty": 4}}, "soft_target": 0.5}
+        self.assertEqual(forbidden_source_label_paths(row), ["metadata.source.difficulty"])
+
+    def test_bidirectional_votes_use_real_question_identity(self):
+        def vote(direction, winner):
+            return {
+                "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
+                "direction": direction, "winner_question_id": winner, "valid": True,
+            }
+
+        rows = [vote("forward", "qa") for _ in range(3)] + [vote("backward", "qa") for _ in range(2)] + [vote("backward", "qb")]
+        result = aggregate_pair_votes(rows)
+        self.assertGreater(result["soft_target"], 0.5)
+        self.assertEqual(result["valid_votes"], 6)
+
+    def test_invalid_winner_is_rejected(self):
+        rows = [
+            {"pair_id": "p", "question_a_id": "a", "question_b_id": "b", "direction": "forward", "winner_question_id": "x", "valid": True},
+            {"pair_id": "p", "question_a_id": "a", "question_b_id": "b", "direction": "backward", "winner_question_id": "a", "valid": True},
+        ]
+        with self.assertRaises(ValueError):
+            aggregate_pair_votes(rows)
+
+    def test_smoothing_reliability_and_metrics(self):
+        self.assertAlmostEqual(smoothed_probability(3, 3), 0.875)
+        self.assertEqual(pair_reliability(0.2)["sample_weight"], 0.5)
+        metrics = soft_pairwise_metrics([0.9, 0.1, 0.5], [0.8, 0.2, 0.5])
+        self.assertEqual(metrics["pairwise_accuracy"], 1.0)
+        self.assertEqual(metrics["non_tied_pair_count"], 2)
+
+    def test_graph_metrics_include_isolated_nodes(self):
+        pairs = [{"question_a_id": "a", "question_b_id": "b"}]
+        metrics = graph_metrics(pairs, ["a", "b", "c"])
+        self.assertEqual(metrics["connected_components"], 2)
+        self.assertAlmostEqual(metrics["node_coverage"], 2 / 3)
+
+    def test_preparation_drops_raw_difficulty_instead_of_using_it(self):
+        source = {
+            "id": "q1",
+            "difficulty": 5,
+            "raw_difficulty": 4,
+            "stem": "小球做匀速直线运动。",
+            "analysis": "速度保持不变。",
+            "teacher_difficulty_id": 1,
+            "teacher_difficulty_level": "基础题",
+            "feature_metadata": {"knowledge_domains": ["力学"], "difficulty": 5},
+            "diagnostics": {"has_image_url": True, "raw_difficulty": 4},
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            input_path = directory / "input.jsonl"
+            output_path = directory / "questions.jsonl"
+            input_path.write_text(json.dumps(source, ensure_ascii=False) + "\n", encoding="utf-8")
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "prepare_pairwise_questions.py"),
+                "--input", str(input_path), "--output", str(output_path),
+                "--manifest", str(directory / "manifest.json"), "--split", "pilot",
+            ], check=True, capture_output=True, text=True)
+            prepared = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(forbidden_source_label_paths(prepared), [])
+            self.assertEqual(prepared["teacher_difficulty_id"], 1)
+            self.assertEqual(prepared["feature_metadata"], {"knowledge_domains": ["力学"]})
+            self.assertTrue(prepared["diagnostics"]["has_image"])
+            self.assertFalse(prepared["diagnostics"]["images_uploaded"])
+
+    def test_candidate_vote_aggregate_validate_smoke_pipeline(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            questions = directory / "questions.jsonl"
+            question_rows = [
+                {
+                    "id": f"q{index}", "split": "pilot", "text": f"【题干】\n物理题 {index}",
+                    "teacher_difficulty_id": index % 3,
+                    "feature_metadata": {"knowledge_domains": ["力学"]},
+                    "teacher_features": {"problem_structure": "直接计算"},
+                    "diagnostics": {"has_image": False, "images_uploaded": False},
+                }
+                for index in range(6)
+            ]
+            questions.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in question_rows), encoding="utf-8")
+            candidates = directory / "candidates.jsonl"
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "build_pair_candidates.py"),
+                "--questions", str(questions), "--output", str(candidates),
+                "--manifest", str(directory / "candidate_manifest.json"),
+                "--selected-questions-output", str(directory / "selected.jsonl"),
+                "--target-pairs", "6", "--minimum-degree", "2", "--maximum-degree", "4",
+            ], check=True, capture_output=True, text=True)
+            pair_rows = [json.loads(line) for line in candidates.read_text(encoding="utf-8").splitlines()]
+            votes = []
+            for pair in pair_rows:
+                winner = max(pair["question_a_id"], pair["question_b_id"])
+                for direction in ("forward", "backward"):
+                    for sample_index in range(3):
+                        votes.append({
+                            "pair_id": pair["pair_id"], "question_a_id": pair["question_a_id"],
+                            "question_b_id": pair["question_b_id"], "direction": direction,
+                            "winner_question_id": winner, "sample_index": sample_index,
+                            "raw_output": "A", "valid": True,
+                        })
+            raw_votes = directory / "votes.jsonl"
+            raw_votes.write_text("".join(json.dumps(row) + "\n" for row in votes), encoding="utf-8")
+            curated = directory / "pairs.jsonl"
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "aggregate_pairwise_votes.py"),
+                "--pairs", str(candidates), "--raw-votes", str(raw_votes),
+                "--output", str(curated), "--manifest", str(directory / "pair_manifest.json"),
+            ], check=True, capture_output=True, text=True)
+            validation = subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "validate_pairwise_data.py"),
+                "--input", str(curated), "--questions", str(directory / "selected.jsonl"),
+            ], check=True, capture_output=True, text=True)
+            report = json.loads(validation.stdout)
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(report["records"], 6)
+            self.assertEqual(report["graph"]["node_coverage"], 1.0)
+
+
+if __name__ == "__main__":
+    unittest.main()

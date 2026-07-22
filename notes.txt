@@ -19,3 +19,23 @@ release uses ten single-label CE heads, including the original nine-class
 Planned runs: (1) 1024-token baseline, (2) 1536-token length ablation, and
 (3) 2048-token length ablation. Use the same frozen split and calibration
 protocol. Do not select a model using the gold test set.
+
+V3 pairwise run notes
+=====================
+
+Objective: replace absolute API label imitation with a text-only QuRating-style
+soft Bradley-Terry scorer. Local Qwen3-32B is the pair judge; Qwen3.5-4B LoRA is
+the scalar student. Images are not uploaded.
+
+Hard exclusion: source `difficulty` and derived `raw_difficulty` are known bad.
+They are not candidate strata, prompts, targets, calibration labels, or metrics.
+Only direct bidirectional Qwen3-32B votes create V3 supervision. The API+V7
+teacher level may be used only to diversify candidate edges.
+
+Planned sequence:
+1. 2,000-question / 8,000-pair pilot, seed 42.
+2. Inspect 100 pairs; require >=99% parse success and <10% high-position-bias quarantine.
+3. Short student run and select by validation soft pairwise log loss.
+4. Expand comparison graph only after the pilot passes.
+5. Calibrate four frozen thresholds on a fixed reference population with the
+   declared 20/20/30/20/10 distribution; later compare against trusted anchors.
