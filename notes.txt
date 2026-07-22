@@ -39,3 +39,19 @@ Planned sequence:
 4. Expand comparison graph only after the pilot passes.
 5. Calibrate four frozen thresholds on a fixed reference population with the
    declared 20/20/30/20/10 distribution; later compare against trusted anchors.
+
+V3 cascade validation update (2026-07-22)
+=========================================
+
+The 20-pair reasoning ablation rejected thinking_512 and retained
+thinking_1024 for the next pilot. Text length alone did not identify reliable
+nonthinking pairs. The pre-registered cascade instead uses three forward and
+three backward nonthinking votes, accepts only position-stable decisive pairs,
+and escalates all others to thinking_1024.
+
+Before production, run the independent 200-pair validation implemented by
+`scripts/server_run_cascade_validation.sh`. It proportionally samples from the
+2,000-question / 8,000-pair graph, excludes every question used by the old
+smoke, runs thinking_1024 on all 200 pairs for comparison, and exports a blind
+human-audit set. The route may expand only if both the automatic gate and human
+audit pass. `docs/experiment_log.md` remains the canonical detailed record.

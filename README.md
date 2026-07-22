@@ -135,6 +135,14 @@ teacher-level candidate builder on these raw V3 splits. Start with
 `configs/pair_sampling_raw_v3_smoke.json`, then expand to the 2k-question
 pilot only after graph and pair inspection passes.
 
+After the 20-pair reasoning smoke, validate the pre-registered cascade on an
+independent 200-pair sample. `server_run_cascade_validation.sh` excludes every
+question used by the smoke, runs exactly three nonthinking votes per direction,
+then evaluates all 200 pairs with `thinking_1024` on two disjoint TP=2 shards.
+It writes a blind human-audit file without teacher predictions. Do not route by
+text length alone; the smoke showed that short pairs can be more position
+sensitive than mixed-length pairs.
+
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
 calibration procedure.

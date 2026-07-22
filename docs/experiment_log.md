@@ -800,15 +800,53 @@ required_from_user:
 
 ## 7. 当前下一步
 
+### 级联验证工具实现
+
+```yaml
+date: 2026-07-22
+status: READY_TO_RUN_ON_SERVER
+purpose: independently_validate_pre_registered_cascade_on_200_pairs
+sample:
+  source: 2000_question_8000_pair_pilot_graph
+  size: 200
+  stratification: proportional_pair_source_x_length_bucket_pair
+  exclusion: all_pairs_touching_any_question_used_by_reasoning_smoke
+route:
+  nonthinking_votes_per_direction: 3
+  nonthinking_adaptive_sampling: false
+  accept_if_position_bias_gap_lte: 0.25
+  accept_if_soft_target_outside: [0.30, 0.70]
+  escalation_mode: thinking_1024
+validation_only: thinking_runs_on_all_200_pairs
+human_audit:
+  blind: true
+  default_size: 80
+implementation:
+  - src/physics_difficulty/pairwise/cascade.py
+  - scripts/prepare_cascade_validation_pairs.py
+  - scripts/merge_teacher_vote_shards.py
+  - scripts/evaluate_cascade_routing.py
+  - scripts/server_run_cascade_validation.sh
+verification:
+  unit_tests: 40_PASS
+  real_candidate_graph: 2000_questions_8000_pairs_PASS
+  smoke_question_ids_excluded: 35
+  candidate_pairs_excluded_by_question: 279
+  selected_pairs: 200
+  thinking_shard_pair_counts: [100, 100]
+  thinking_shard_text_characters: [151062, 151070]
+  shard_pair_overlap: 0
+```
+
 ```yaml
 next_actions:
   - completed: V3-TEACHER-ABLATION-001
     provisional_mode: thinking_1024
-  - perform: representative_human_pair_audit
-    purpose: measure_decisive_pair_accuracy_and_tie_handling
-  - evaluate: staged_or_cascade_teacher_strategy
-    purpose: reduce_thinking_1024_labeling_cost_without_accepting_nonthinking_position_bias
-    candidate_rule: nonthinking_3_votes_each_direction_then_escalate_unstable_or_uncertain_pairs
-  - expand_if_passed: bounded_pairwise_pilot_before_8000_pairs
+  - run: cascade_validation_200_v1
+    physical_gpus: [4, 5, 6, 7]
+  - inspect: cascade_validation_200_v1/evaluation/report.json
+  - perform: blind_human_pair_audit
+    input: cascade_validation_200_v1/evaluation/human_audit_blind.jsonl
+  - expand_if_passed: production_cascade_on_8000_pairs
   - then: train_soft_Bradley_Terry_student
 ```
