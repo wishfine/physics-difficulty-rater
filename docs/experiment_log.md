@@ -150,7 +150,7 @@ candidates: /data/zhangyonglin/physics-difficulty-runtime/pairwise_v3/smoke/cand
 
 ```yaml
 date: 2026-07-22
-status: READY_TO_RERUN_AFTER_FIX
+status: PARTIAL_RESULTS_READY_AWAITING_MODE_COMPARISON
 pair_count: 20
 output_root: /data/zhangyonglin/physics-difficulty-runtime/pairwise_v3/smoke/reasoning_ablation_20
 code_commit_initial: 73345a1
@@ -252,7 +252,7 @@ thinking_512:
   manifest: .../thinking_512/teacher.manifest.json
   log: .../logs/thinking_512.log
 thinking_1024:
-  status: PENDING
+  status: PASS
   manifest: .../thinking_1024/teacher.manifest.json
   log: .../logs/thinking_1024.log
 comparison:
@@ -313,6 +313,66 @@ provisional_position_bias_on_18_aggregatable_pairs:
 `question_id`，证明方向映射正确。`thinking_512` 不能作为正式 teacher 配置或训练标签来源；
 若要判断 thinking 本身是否有收益，需要继续运行 `thinking_1024`。不得从被截断的自然语言
 末尾猜测 A/B 并补票。
+
+#### thinking_1024 最终结果
+
+```yaml
+status: PASS
+started_at: 2026-07-22T15:33:12+08:00
+completed_at: 2026-07-22T15:46:53+08:00
+schema_version: local_pairwise_teacher_run_v2
+teacher_mode: thinking_1024
+config_hash: 53ece673ef4e7a2967cb49b6ac4336ab389cfe2bd821d447fcdcbfe464e7197a
+prompt_version: physics_pair_vote_v1
+model: /home/share_ssd_data/nfs-env/llm_models/Qwen/Qwen3-32B
+pair_file: /data/zhangyonglin/physics-difficulty-runtime/pairwise_v3/smoke/candidates.jsonl
+raw_votes: /data/zhangyonglin/physics-difficulty-runtime/pairwise_v3/smoke/reasoning_ablation_20/thinking_1024/raw_votes.jsonl
+manifest: /data/zhangyonglin/physics-difficulty-runtime/pairwise_v3/smoke/reasoning_ablation_20/thinking_1024/teacher.manifest.json
+
+completion:
+  pairs_requested: 20
+  pairs_completed_minimum: 20
+  total_vote_rows: 157
+  valid_votes: 156
+  invalid_or_truncated_votes: 1
+  parse_success_rate: 0.993631
+  truncation_or_parse_failure_rate: 0.006369
+  sampling_round_cumulative_votes: [120, 156, 157]
+  warnings: []
+
+cost_and_speed:
+  generation_wall_seconds: 787.283
+  generation_wall_time: 00:13:07
+  valid_votes_per_second: 0.19815
+  output_tokens: 84089
+  valid_output_tokens: 83065
+  mean_output_tokens_per_valid_vote: 532.468
+
+effective_sampling_config:
+  enable_thinking: true
+  temperature: 0.6
+  top_p: 0.95
+  top_k: 20
+  min_p: 0.0
+  max_new_tokens: 1024
+  prompt_batch_size: 4
+  adaptive_votes_per_direction: [3, 5, 10]
+
+effective_engine_config:
+  dtype: bfloat16
+  tensor_parallel_size: 2
+  gpu_memory_utilization: 0.82
+  max_num_batched_tokens: 4096
+  max_num_seqs: 32
+```
+
+结论：`thinking_1024` 已完整覆盖 20/20 pair，只有 1/157 个输出无效，说明 1024 Token
+基本解决了 `thinking_512` 的系统性截断问题。它生成 156 个有效票仅消耗 84,089 个输出
+Token；相比之下，`thinking_512` 快照已经消耗 158,469 Token，却只有 112 个有效票且实验
+尚未完成。因此在两个 thinking 配置之间，`thinking_1024` 明显更可靠，也更节省有效标签
+成本。退出阶段的 TCPStore/NCCL 警告发生在结果生成完成之后，且日志明确记录全部 worker
+正常退出，不判定为实验失败。最终是否选择 thinking，仍须结合 `nonthinking` 结果、
+`comparison.json` 和人工审计，不能仅凭解析成功率决定。
 
 ## 4. 必须记录的关键指标
 
