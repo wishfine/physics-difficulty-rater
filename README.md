@@ -110,11 +110,24 @@ text-only questions in both orders; a Qwen3.5-4B LoRA student learns one scalar
 score with a soft Bradley-Terry loss. It does not train the old ten feature
 heads and does not apply feature-based hard rules after prediction.
 
-The historical source field named `difficulty` (and prepared
-`raw_difficulty`) is known to be wrong. V3 rejects it recursively and never
-uses it in a prompt, target, calibration, or metric. The former API+V7
-`teacher_difficulty_id`, when present, is only a hidden sampling stratum for
-constructing a diverse graph. It is not pairwise supervision.
+The historical source field named `difficulty` is known to be wrong. V3 starts
+again from the raw 25k question file, preserves its existing question IDs, and
+whitelists only text, sections, hashes, and non-label diagnostics. It never
+copies or uses `difficulty`, `raw_difficulty`, the API+V7 absolute difficulty,
+or old feature labels in splitting, pair sampling, supervision, calibration,
+or metrics. The raw source was historically sampled as 5,000 records per bad
+label value, so it is a pairwise question pool rather than a natural business
+difficulty distribution.
+
+Upload the raw JSONL outside Git, then prepare the immutable text-only splits:
+
+```bash
+python scripts/prepare_raw_v3_questions.py \
+  --input data/raw/physics_sampled_5000_per_difficulty_v2.jsonl \
+  --output-dir /data/$USER/physics-difficulty-runtime/pairwise_v3/questions \
+  --manifest /data/$USER/physics-difficulty-runtime/pairwise_v3/questions.manifest.json \
+  --seed 42
+```
 
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold

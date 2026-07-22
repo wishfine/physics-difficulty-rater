@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Any, Dict, Iterable, List
 
 HTTP_URL = re.compile(r"https?://\S+", re.IGNORECASE)
@@ -13,7 +14,10 @@ EXCESS_NEWLINES = re.compile(r"\n{3,}")
 
 LEAKAGE_PATTERNS = {
     "explicit_level": re.compile(r"送分题|基础题|中等题|拔高题|压轴题"),
-    "difficulty_coefficient": re.compile(r"难度系数|难度等级|难易程度"),
+    "difficulty_coefficient": re.compile(r"难度系数|难度等级"),
+    # Generic "难易程度" is common physics wording (for example,
+    # conductivity).  Only flag it when it explicitly assesses a question.
+    "difficulty_assessment": re.compile(r"(?:本题|该题|题目|试题|该试题).{0,12}难易程度|难易程度.{0,12}(?:本题|该题|题目|试题|该试题)"),
     "difficulty_adjective": re.compile(r"本题(?:较为|比较|非常|相对)?(?:简单|容易|较难|困难)"),
 }
 FORBIDDEN_SOURCE_LABEL_KEYS = {"difficulty", "raw_difficulty"}
@@ -30,6 +34,22 @@ def normalize_text_only(text: Any) -> str:
     value = HTTP_URL.sub("", value)
     value = "\n".join(EXCESS_WHITESPACE.sub(" ", line).strip() for line in value.splitlines())
     return EXCESS_NEWLINES.sub("\n\n", value).strip()
+
+
+def normalize_for_dedup(text: Any) -> str:
+    """Create a conservative comparison key without changing model input."""
+    value = unicodedata.normalize("NFKC", normalize_text_only(text))
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def has_semantic_content(text: Any) -> bool:
+    """Reject title-only/image-only records while retaining formulas."""
+    value = normalize_for_dedup(text)
+    value = re.sub(r"【(?:题干|选项|解析|小题)】", "", value)
+    value = re.sub(r"(?:^|\s)小题\d+\s*[:：]", " ", value)
+    value = re.sub(r"(?:^|\s)(?:题干|选项|解析)\s*[:：]", " ", value)
+    value = re.sub(r"[\s:：,，.。；;!！?？【】\[\]()（）]+", "", value)
+    return bool(value)
 
 
 def leakage_findings(text: str) -> List[Dict[str, str]]:

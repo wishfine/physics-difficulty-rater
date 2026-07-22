@@ -15,7 +15,8 @@ P(A 比 B 难) = sigmoid(s(A) - s(B))
 ### 绝对禁止的数据
 
 25,000 条源数据中的 `difficulty` 是错误、无意义的历史字段；准备数据后出现的
-`raw_difficulty` 与它同源。两者均不得用于：
+`raw_difficulty` 与它同源。旧 API+V7 结果中的 `teacher_difficulty_id` 和
+`teacher_difficulty_level` 也不进入 V3 主链路。这些字段均不得用于：
 
 - pair 候选采样或分层；
 - Qwen3-32B Prompt；
@@ -24,17 +25,17 @@ P(A 比 B 难) = sigmoid(s(A) - s(B))
 - 4 阈值校准；
 - validation/test 指标。
 
-预处理采用输出白名单，不复制原始 metadata；训练数据校验会递归搜索并拒绝这两个
-字段。`teacher_difficulty_id` 是之前 API Prompt + V7 的结果，不等于原始
-`difficulty`。它只允许在候选生成阶段帮助覆盖相近档和跨档组合，绝不作为新模型
-标签，也不会进入模型文本。
+预处理采用输出白名单，不复制任何历史难度标签或教师特征。源文件曾按错误
+`difficulty=1..5` 各抽 5,000 条，因此可以作为 pairwise 题目池，但不能代表自然业务
+难度分布，更不能用它的分位数直接定义五档阈值。
 
 ## 2. 数据流
 
 ```mermaid
 flowchart LR
-    R["25k 原始/curated 题目"] --> N["纯文本规范化与泄漏检查"]
-    N --> S["复用既有题目 ID 和 train/validation/test"]
+    R["25k 原始题目"] --> N["纯文本规范化与泄漏检查"]
+    N --> D["规范化文本去重与隔离"]
+    D --> S["按既有 parent/question ID 稳定切分"]
     S --> G["各 split 内构造比较图"]
     G --> J["Qwen3-32B 正序+反序随机采样"]
     J --> A["按真实 question_id 聚合软概率"]
@@ -47,91 +48,72 @@ flowchart LR
 ```
 
 所有 pair 都只能在同一 split 内组成，严禁 train 题与 validation/test 题比较。
-题目稳定 ID 和 frozen18 split 已经存在，V3 直接复用，不再建立、哈希或重映射题目
-ID。预处理遇到缺失 `id/question_id` 的记录会直接失败。已有 `question_group_id` 或
-`parent_id` 原样保留；独立题没有组字段时，仅用自身题目 ID 表示单题组。这里只把旧
-teacher 档位当分层信息，不当监督。
+V3 复用原文件已有 `question_id/parent_id`，不重新生成题目 ID。先用最终模型可见文本
+去重，再以 `sha256(seed, question_group_id)` 做 8:1:1 稳定切分；主题和它的小题永远
+留在同一条记录和同一 split。
 
-## 3. 文本准备
+## 3. 原始 25k 文本准备
 
-V3 的 25,000 条上游输入固定为已经处理完成的
-`data/curated/physics_teacher_v2_frozen18.jsonl`，实际运行直接使用它已经生成的
-`split_v2_frozen18/{train,validation,test}.jsonl`。不要重新读取原始 25k，不重跑 API
-Prompt、V7 或 split；上游已经完成的去重结果直接继承，V3 仅做重复完整性检查。
-脚本默认 `--input-contract frozen18`，严格校验服务器确认的 20 个顶层字段、10维特征、
-legacy18 完整性、`text/input_sections` 一致性以及既有 `input_sha256`；误传原始文件
-会立即失败。
+V3 的题目源固定为
+`physics_sampled_5000_per_difficulty_v2.jsonl`。它的 9 个字段合约为：
+`parent_id/question_id/stem/options/analysis/sub_questions/stem_pic_url/analysis_pic_url/difficulty`。
+脚本要求字段合约完整，但只白名单输出题目 ID、文本、分段、哈希和诊断；
+`difficulty` 只被确认为上游已知废弃字段，不复制到任何题目输出。
 
-`prepare_pairwise_questions.py`：
+`prepare_raw_v3_questions.py`：
 
-- 读取已经固定渲染的题干、选项、解析和小题结构；
-- 删除 Markdown/HTML 图片、图片占位符和 URL；
-- 按 student tokenizer 做分段截断，优先保留题干、选项和每个小题结构，再分配解析
-  token，避免只保留长文本开头；
-- 检查“本题难度等级/送分题/压轴题”等显式标签泄漏；
-- 去重并输出 manifest/quarantine；
-- 通过白名单只保留候选采样需要的知识域、旧 teacher 档位和非文本图片标记。
-- 将 `source_dataset_id`、原 `input_sha256` 和 schema/Prompt/V7/model 版本收进
-  `source_provenance`，用于追溯但不进入模型。
-- 明确丢弃 `raw_difficulty`、`diagnostics.raw_api_disagreement`、旧
-  `label_quality.sample_weight` 和 `teacher_features_legacy18`；它们不生成 V3 权重。
+- 按题干、选项、解析、小题的固定顺序生成 `input_sections/text`；
+- 不上传图片，只保留 `has_image/image_dependency_risk` 诊断；
+- 隔离只有标题/图片占位的语义空题；
+- 隔离“基础题/中等题/试题难易程度”等难度泄漏，但不误判“导电的难易程度”；
+- 基于 `NFKC + 纯文本规范化` 去重；
+- 按 `question_group_id/parent_id` 稳定哈希切分 8:1:1，完全不用难度标签分层；
+- 输出 `all/train/validation/test/quarantine.jsonl` 和带源文件 SHA256 的 manifest。
 
-服务器示例：
+在本机 Mac 执行原始文件上传：
+
+```bash
+scp "/Users/wishfine/Desktop/xdf/ai题库/prompt_test/data/physics_sampled_5000_per_difficulty_v2.jsonl" \
+  zhangyonglin@172.22.0.45:~/physics-difficulty-rater/data/raw/
+```
+
+服务器准备数据：
 
 ```bash
 cd ~/physics-difficulty-rater
+git pull origin main
 
-STUDENT=/home/zhangyonglin/models/models/Qwen--Qwen3.5-4B/snapshots/master
 PAIR_ROOT=/data/zhangyonglin/physics-difficulty-runtime/pairwise_v3
-mkdir -p "$PAIR_ROOT/questions"
+RAW=data/raw/physics_sampled_5000_per_difficulty_v2.jsonl
 
-python scripts/prepare_pairwise_questions.py \
-  --input data/curated/split_v2_frozen18/train.jsonl \
-  --output "$PAIR_ROOT/questions/train.jsonl" \
-  --manifest "$PAIR_ROOT/questions/train.manifest.json" \
-  --quarantine-output "$PAIR_ROOT/questions/train.quarantine.jsonl" \
-  --split train \
-  --student-tokenizer-path "$STUDENT" \
-  --max-length 1024
+python scripts/prepare_raw_v3_questions.py \
+  --input "$RAW" \
+  --output-dir "$PAIR_ROOT/questions" \
+  --manifest "$PAIR_ROOT/questions.manifest.json" \
+  --seed 42
 ```
 
-validation/test 分别运行同一命令，只替换输入、输出和 `--split`。
-
-`canonical_raw` 仅保留给未来线上新题做相同文本投影，不能用于这次 25k 训练数据：
-
-```bash
-python scripts/prepare_pairwise_questions.py ... --input-contract canonical_raw
-```
+文本准备阶段保留完整内容，不按 student tokenizer 提前截断。teacher/student 的不同 token
+预算在各自 dataset/collator 中处理，避免数据池永久丢失解析。
 
 ## 4. 比较图与 pilot
 
 不要把 20k 题做全组合；它会产生约 2 亿条边。采用稀疏、连通、度数均衡的图。
 首轮 pilot 固定抽 2,000 题、8,000 pair，每题平均约 8 条边，最少 4、最多 12。
 
-候选来源目标占比：
+新 raw V3 候选来源必须只使用无标签信息：
 
-- `adjacent_teacher_level` 35%：旧 API teacher 相邻档，只为增加边界样本；
-- `same_teacher_level` 25%：制造难分 pair；
-- `baseline_uncertain` 20%：有旧模型分数时匹配邻近分数，否则退化为同层/随机；
-- `cross_teacher_level` 10%：清晰远距离 pair；
-- `cross_domain_anchor` 10%：跨知识域连接比较图。
+- `semantic_near`：文本语义接近，学习细粒度难度差；
+- `structure_matched`：小题数、长度档、有无解析等接近，防止只按题长判断；
+- `random_global`：全局随机边，提供远距离关系；
+- `graph_bridge`：连接不同题目簇，统一全局分数标尺；
+- `low_degree_repair`：为配对数不足的题目补边。
 
-这里完全不读取原始 `difficulty`。如果输入没有 `teacher_difficulty_id`，生成器会退化
-为度数均衡随机图，仍可运行，但样本效率会低一些。
+旧 `build_pair_candidates.py` 的 teacher-level 候选模式不能用于这份 raw V3 数据。
+在 raw 候选图实现和 pilot 验收前，不要运行下游 Qwen3-32B 打标。
 
-```bash
-mkdir -p "$PAIR_ROOT/pilot"
-
-python scripts/build_pair_candidates.py \
-  --config configs/pair_sampling_pilot.json \
-  --questions "$PAIR_ROOT/questions/train.jsonl" \
-  --output "$PAIR_ROOT/pilot/candidates.jsonl" \
-  --selected-questions-output "$PAIR_ROOT/pilot/questions.jsonl" \
-  --manifest "$PAIR_ROOT/pilot/candidates.manifest.json"
-```
-
-生成后要求：`node_coverage=1.0`、最大连通分量比例接近 1、最小度数至少 4、无重复
-无向边、无 self pair。
+候选图生成后仍要求：`node_coverage=1.0`、最大连通分量比例接近 1、最小度数至少 4、
+无重复无向边、无 self pair。
 
 ## 5. 本地 Qwen3-32B teacher
 

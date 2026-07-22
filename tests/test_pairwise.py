@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from physics_difficulty.data.text_only import forbidden_source_label_paths, normalize_text_only, question_group_identifier, question_identifier
+from physics_difficulty.data.text_only import forbidden_source_label_paths, leakage_findings, normalize_text_only, question_group_identifier, question_identifier
 from physics_difficulty.pairwise.labels import aggregate_pair_votes, pair_reliability, smoothed_probability
 from physics_difficulty.pairwise.metrics import graph_metrics, soft_pairwise_metrics
 
@@ -24,6 +24,11 @@ class PairwiseTests(unittest.TestCase):
     def test_forbidden_historical_label_is_found_recursively(self):
         row = {"metadata": {"source": {"difficulty": 4}}, "soft_target": 0.5}
         self.assertEqual(forbidden_source_label_paths(row), ["metadata.source.difficulty"])
+
+    def test_physics_phrase_about_ease_is_not_label_leakage(self):
+        self.assertEqual(leakage_findings("导体对电流阻碍作用的大小表示导电的难易程度。"), [])
+        findings = leakage_findings("该试题难易程度为中等。")
+        self.assertEqual([item["type"] for item in findings], ["difficulty_assessment"])
 
     def test_existing_question_id_is_preserved_and_never_invented(self):
         self.assertEqual(question_identifier({"id": 123}), "123")
