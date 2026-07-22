@@ -71,6 +71,11 @@ class PairwiseTests(unittest.TestCase):
             "raw_difficulty": 4,
             "stem": "小球做匀速直线运动。",
             "analysis": "速度保持不变。",
+            "text": "【题干】\n小球做匀速直线运动。\n\n【解析】\n速度保持不变。",
+            "input_sections": [
+                {"kind": "parent_题干", "title": "【题干】", "text": "小球做匀速直线运动。", "required": True},
+                {"kind": "parent_解析", "title": "【解析】", "text": "速度保持不变。", "required": False},
+            ],
             "teacher_difficulty_id": 1,
             "teacher_difficulty_level": "基础题",
             "feature_metadata": {"knowledge_domains": ["力学"], "difficulty": 5},
@@ -92,6 +97,20 @@ class PairwiseTests(unittest.TestCase):
             self.assertEqual(prepared["feature_metadata"], {"knowledge_domains": ["力学"]})
             self.assertTrue(prepared["diagnostics"]["has_image"])
             self.assertFalse(prepared["diagnostics"]["images_uploaded"])
+
+    def test_prepared_contract_rejects_raw_unprocessed_record(self):
+        source = {"id": "q1", "stem": "尚未处理的题目", "difficulty": 3}
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            input_path = directory / "raw.jsonl"
+            input_path.write_text(json.dumps(source, ensure_ascii=False) + "\n", encoding="utf-8")
+            result = subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "prepare_pairwise_questions.py"),
+                "--input", str(input_path), "--output", str(directory / "out.jsonl"),
+                "--manifest", str(directory / "manifest.json"), "--split", "train",
+            ], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("prepared_v2 input is missing canonical text", result.stderr)
 
     def test_candidate_vote_aggregate_validate_smoke_pipeline(self):
         with tempfile.TemporaryDirectory() as directory:

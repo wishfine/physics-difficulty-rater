@@ -75,6 +75,14 @@ def safe_feature_metadata(record: Dict[str, Any]) -> Dict[str, Any]:
     return {"knowledge_domains": [str(value) for value in domains if str(value).strip()]}
 
 
+def validate_prepared_v2(record: Dict[str, Any], line_number: int) -> None:
+    """Require the already-prepared 25k contract, not the original raw JSONL."""
+    if not str(record.get("text") or "").strip():
+        raise ValueError(f"line {line_number}: prepared_v2 input is missing canonical text")
+    if not isinstance(record.get("input_sections"), list) or not record["input_sections"]:
+        raise ValueError(f"line {line_number}: prepared_v2 input is missing input_sections")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -82,6 +90,7 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--quarantine-output")
     parser.add_argument("--split", required=True, choices=["train", "validation", "test", "pilot", "reference"])
+    parser.add_argument("--input-contract", choices=["prepared_v2", "canonical_raw"], default="prepared_v2")
     parser.add_argument("--student-tokenizer-path")
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--allow-label-leakage", action="store_true")
@@ -107,12 +116,19 @@ def main() -> None:
                 continue
             stats["source_records"] += 1
             record = json.loads(line)
+            if args.input_contract == "prepared_v2":
+                validate_prepared_v2(record, line_number)
             try:
                 question_id = question_identifier(record)
             except ValueError as error:
                 raise ValueError(f"line {line_number}: {error}") from error
             sections = normalized_sections(record)
-            if sections:
+            if args.input_contract == "prepared_v2":
+                clean_text = normalize_text_only(record["text"])
+                section_text = normalize_text_only(render_sections(sections))
+                if clean_text != section_text:
+                    raise ValueError(f"line {line_number}: canonical text and input_sections disagree")
+            elif sections:
                 clean_text = render_sections(sections)
             else:
                 raw_text = source_text(record, format_question)
@@ -183,6 +199,7 @@ def main() -> None:
         "output": str(output_path.resolve()),
         "quarantine_output": str(quarantine_path.resolve()),
         "split": args.split,
+        "input_contract": args.input_contract,
         "images_uploaded": False,
         "student_tokenizer_path": args.student_tokenizer_path,
         "max_length": args.max_length if tokenizer is not None else None,

@@ -54,9 +54,17 @@ teacher 档位当分层信息，不当监督。
 
 ## 3. 文本准备
 
+V3 的 25,000 条上游输入固定为已经处理完成的
+`data/curated/physics_teacher_v2_frozen18.jsonl`，实际运行直接使用它已经生成的
+`split_v2_frozen18/{train,validation,test}.jsonl`。不要重新读取原始 25k，不重跑 API
+Prompt、V7 或 split；上游已经完成的去重结果直接继承，V3 仅做重复完整性检查。
+脚本默认 `--input-contract prepared_v2`，要求每条记录已有
+稳定 ID、`text` 和 `input_sections`，并校验两种文本表示一致；误传原始文件会立即
+失败。
+
 `prepare_pairwise_questions.py`：
 
-- 固定渲染题干、选项、解析、小题；
+- 读取已经固定渲染的题干、选项、解析和小题结构；
 - 删除 Markdown/HTML 图片、图片占位符和 URL；
 - 按 student tokenizer 做分段截断，优先保留题干、选项和每个小题结构，再分配解析
   token，避免只保留长文本开头；
@@ -84,6 +92,12 @@ python scripts/prepare_pairwise_questions.py \
 ```
 
 validation/test 分别运行同一命令，只替换输入、输出和 `--split`。
+
+`canonical_raw` 仅保留给未来线上新题做相同文本投影，不能用于这次 25k 训练数据：
+
+```bash
+python scripts/prepare_pairwise_questions.py ... --input-contract canonical_raw
+```
 
 ## 4. 比较图与 pilot
 
@@ -301,8 +315,9 @@ python score_pairwise_questions.py \
   --output predictions.jsonl
 ```
 
-这里的 `incoming_questions.jsonl` 必须先经过 `prepare_pairwise_questions.py`，不能把
-仍含错误 `difficulty` 的原始业务 JSONL 直接交给打分脚本。
+这里的 `incoming_questions.jsonl` 必须先通过
+`prepare_pairwise_questions.py --input-contract canonical_raw` 生成，不能把仍含错误
+`difficulty` 的原始业务 JSONL 直接交给打分脚本。
 
 固定分布法得到的是“相对于参考总体”的五档。后续获得可靠教研绝对标签后，应增加
 anchor calibration 对照实验：用锚点分数拟合四个有教育语义的边界，并在独立 gold
