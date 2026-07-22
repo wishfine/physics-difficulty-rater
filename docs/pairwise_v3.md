@@ -103,17 +103,46 @@ python scripts/prepare_raw_v3_questions.py \
 
 新 raw V3 候选来源必须只使用无标签信息：
 
-- `semantic_near`：文本语义接近，学习细粒度难度差；
+- `lexical_near`：用无依赖的字符3-gram SimHash LSH 召回、Jaccard 精排词面接近题；
 - `structure_matched`：小题数、长度档、有无解析等接近，防止只按题长判断；
 - `random_global`：全局随机边，提供远距离关系；
 - `graph_bridge`：连接不同题目簇，统一全局分数标尺；
 - `low_degree_repair`：为配对数不足的题目补边。
 
 旧 `build_pair_candidates.py` 的 teacher-level 候选模式不能用于这份 raw V3 数据。
-在 raw 候选图实现和 pilot 验收前，不要运行下游 Qwen3-32B 打标。
+使用独立的 `build_raw_v3_pair_candidates.py`：它递归拒绝历史难度字段，用稳定 ID 哈希
+抽题，并在最终输出前强制检查连通性、唯一边和度数范围。
+
+先生成 100 题 / 400 pair smoke：
+
+```bash
+mkdir -p "$PAIR_ROOT/smoke"
+
+python scripts/build_raw_v3_pair_candidates.py \
+  --config configs/pair_sampling_raw_v3_smoke.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --output "$PAIR_ROOT/smoke/candidates.jsonl" \
+  --selected-questions-output "$PAIR_ROOT/smoke/questions.jsonl" \
+  --manifest "$PAIR_ROOT/smoke/candidates.manifest.json"
+```
+
+smoke 通过后再生成 2,000 题 / 8,000 pair pilot：
+
+```bash
+mkdir -p "$PAIR_ROOT/pilot"
+
+python scripts/build_raw_v3_pair_candidates.py \
+  --config configs/pair_sampling_raw_v3_pilot.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --output "$PAIR_ROOT/pilot/candidates.jsonl" \
+  --selected-questions-output "$PAIR_ROOT/pilot/questions.jsonl" \
+  --manifest "$PAIR_ROOT/pilot/candidates.manifest.json"
+```
 
 候选图生成后仍要求：`node_coverage=1.0`、最大连通分量比例接近 1、最小度数至少 4、
-无重复无向边、无 self pair。
+无重复无向边、无 self pair。manifest 还要求 `lexical_near` 的平均 Jaccard 高于
+`random_global`；否则说明近邻召回没有真正优于随机边。这里只声称“词面接近”，
+不把字符3-gram 误称为深层语义相似。
 
 ## 5. 本地 Qwen3-32B teacher
 

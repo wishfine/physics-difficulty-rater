@@ -129,6 +129,12 @@ python scripts/prepare_raw_v3_questions.py \
   --seed 42
 ```
 
+Build the first label-free graph with
+`scripts/build_raw_v3_pair_candidates.py`; do not use the legacy
+teacher-level candidate builder on these raw V3 splits. Start with
+`configs/pair_sampling_raw_v3_smoke.json`, then expand to the 2k-question
+pilot only after graph and pair inspection passes.
+
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
 calibration procedure.
