@@ -138,3 +138,7 @@ pilot only after graph and pair inspection passes.
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
 calibration procedure.
+
+The append-only [experiment log](docs/experiment_log.md) records data versions,
+run parameters, failures, key teacher/student metrics, artifact locations, and
+the exact information to copy from the server for future updates.
