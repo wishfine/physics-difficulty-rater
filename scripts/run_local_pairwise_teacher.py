@@ -127,13 +127,12 @@ def config_hash(args: argparse.Namespace) -> str:
     return hashlib.sha256(json.dumps(relevant, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     bootstrap = argparse.ArgumentParser(add_help=False)
     bootstrap.add_argument("--config")
-    known, _ = bootstrap.parse_known_args()
+    known, _ = bootstrap.parse_known_args(argv)
     defaults = json.loads(Path(known.config).read_text(encoding="utf-8")) if known.config else {}
     parser = argparse.ArgumentParser(parents=[bootstrap])
-    parser.set_defaults(**defaults)
     parser.add_argument("--pairs", required=True)
     parser.add_argument("--raw-votes-output", required=True)
     parser.add_argument("--manifest", required=True)
@@ -141,6 +140,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tensor-parallel-size", type=int, default=2)
     parser.add_argument("--dtype", default="bfloat16")
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.90)
+    parser.add_argument("--max-num-batched-tokens", type=int, default=4096)
+    parser.add_argument("--max-num-seqs", type=int, default=32)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--initial-samples-per-direction", type=int, default=3)
     parser.add_argument("--uncertain-samples-per-direction", type=int, default=5)
@@ -159,7 +160,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--max-pairs", type=int)
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    known_destinations = {action.dest for action in parser._actions}
+    unknown_config_keys = sorted(set(defaults) - known_destinations)
+    if unknown_config_keys:
+        raise ValueError(f"unknown teacher config keys: {unknown_config_keys}")
+    # Apply JSON defaults only after arguments are registered. Otherwise each
+    # add_argument(default=...) silently overwrites the JSON value.
+    parser.set_defaults(**defaults)
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -168,6 +176,10 @@ def main() -> None:
         raise ValueError("stochastic voting requires temperature > 0 and top-p in (0, 1]")
     if args.top_k < -1 or not 0 <= args.min_p <= 1:
         raise ValueError("top-k must be -1 or non-negative and min-p must be in [0, 1]")
+    if not 0 < args.gpu_memory_utilization < 1:
+        raise ValueError("gpu-memory-utilization must be in (0, 1)")
+    if args.max_num_batched_tokens < 1 or args.max_num_seqs < 1:
+        raise ValueError("max-num-batched-tokens and max-num-seqs must be positive")
     if args.enable_thinking and args.max_new_tokens < 64:
         raise ValueError("thinking mode requires max-new-tokens >= 64 to reduce truncated votes")
     if not 1 <= args.initial_samples_per_direction <= args.uncertain_samples_per_direction <= args.maximum_samples_per_direction:
@@ -205,6 +217,7 @@ def main() -> None:
             "backward_prompt": build_prompt(tokenizer, pairs[0], "backward", args.enable_thinking),
             "teacher_mode": args.mode_name,
             "sampling": {"temperature": args.temperature, "top_p": args.top_p, "top_k": args.top_k, "min_p": args.min_p, "max_new_tokens": args.max_new_tokens},
+            "engine": {"gpu_memory_utilization": args.gpu_memory_utilization, "max_num_batched_tokens": args.max_num_batched_tokens, "max_num_seqs": args.max_num_seqs, "prompt_batch_size": args.batch_size},
             "config_hash": config_hash(args),
         }
         print(json.dumps(preview, ensure_ascii=False, indent=2))
@@ -219,6 +232,8 @@ def main() -> None:
         tensor_parallel_size=args.tensor_parallel_size,
         dtype=args.dtype,
         gpu_memory_utilization=args.gpu_memory_utilization,
+        max_num_batched_tokens=args.max_num_batched_tokens,
+        max_num_seqs=args.max_num_seqs,
         enable_prefix_caching=True,
     )
 

@@ -42,9 +42,9 @@ class TeacherReasoningExperimentTests(unittest.TestCase):
 
     def test_three_reasoning_configs_are_explicit_and_comparable(self):
         expected = {
-            "qwen3_32b_pairwise_teacher_nonthinking.json": (False, 4, 0.7, 0.8, 64),
-            "qwen3_32b_pairwise_teacher_thinking_512.json": (True, 512, 0.6, 0.95, 16),
-            "qwen3_32b_pairwise_teacher_thinking_1024.json": (True, 1024, 0.6, 0.95, 16),
+            "qwen3_32b_pairwise_teacher_nonthinking.json": (False, 4, 0.7, 0.8, 8),
+            "qwen3_32b_pairwise_teacher_thinking_512.json": (True, 512, 0.6, 0.95, 4),
+            "qwen3_32b_pairwise_teacher_thinking_1024.json": (True, 1024, 0.6, 0.95, 4),
         }
         for name, (thinking, budget, temperature, top_p, batch_size) in expected.items():
             config = json.loads((ROOT / "configs" / name).read_text(encoding="utf-8"))
@@ -55,10 +55,31 @@ class TeacherReasoningExperimentTests(unittest.TestCase):
             self.assertEqual(config["top_k"], 20)
             self.assertEqual(config["min_p"], 0.0)
             self.assertEqual(config["batch_size"], batch_size)
+            self.assertEqual(config["gpu_memory_utilization"], 0.82)
+            self.assertEqual(config["max_num_batched_tokens"], 4096)
+            self.assertEqual(config["max_num_seqs"], 32)
             self.assertEqual(config["tensor_parallel_size"], 2)
             self.assertEqual(config["initial_samples_per_direction"], 3)
             self.assertEqual(config["uncertain_samples_per_direction"], 5)
             self.assertEqual(config["maximum_samples_per_direction"], 10)
+
+    def test_json_config_overrides_code_defaults(self):
+        teacher = load_teacher_module()
+        config = ROOT / "configs" / "qwen3_32b_pairwise_teacher_thinking_512.json"
+        args = teacher.parse_args([
+            "--config", str(config),
+            "--pairs", "pairs.jsonl",
+            "--raw-votes-output", "votes.jsonl",
+            "--manifest", "manifest.json",
+            "--model-path", "model",
+        ])
+        self.assertTrue(args.enable_thinking)
+        self.assertEqual(args.mode_name, "thinking_512")
+        self.assertEqual(args.temperature, 0.6)
+        self.assertEqual(args.top_p, 0.95)
+        self.assertEqual(args.max_new_tokens, 512)
+        self.assertEqual(args.batch_size, 4)
+        self.assertEqual(args.gpu_memory_utilization, 0.82)
 
     def test_vote_summary_tracks_parse_rate_tokens_and_throughput(self):
         teacher = load_teacher_module()

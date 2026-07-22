@@ -184,6 +184,12 @@ thinking_1024:thinking=true,  max_new_tokens=1024, temperature=0.6, top_p=0.95
 共同参数: top_k=20, min_p=0, 正反序各自适应采样 3/5/10 次
 ```
 
+为适配两张 A800 80GB 上的 32B BF16 权重，三组统一设置
+`gpu_memory_utilization=0.82`、`max_num_batched_tokens=4096`、`max_num_seqs=32`；
+非思考外层 batch 为 8，思考外层 batch 为 4。这里需要给前向激活和 CUDA Graph 留出
+余量，不能把 KV cache 预占提高到 0.9。JSON 配置在 argparse 参数注册完成后才作为默认值
+加载，命令行显式参数仍可覆盖 JSON。
+
 这里的 512/1024 是生成 Token 预算，不是 vLLM 的 `reasoning_effort=medium/high`；离线
 Qwen3 没有统一的低/中/高强度参数。三个模式必须使用各自独立的 raw vote 文件，禁止把
 不同温度、不同 thinking 模式的票混成一个 soft target。
