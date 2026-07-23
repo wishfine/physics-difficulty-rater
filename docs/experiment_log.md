@@ -922,3 +922,60 @@ log/cascade_validation_200_v1/evaluation/representative_audit_80/new_completed_c
 log/cascade_validation_200_v1/evaluation/cumulative_human_audit_129.jsonl
 log/cascade_validation_200_v1/evaluation/cumulative_human_audit_129_report.json
 ```
+
+## 9. V3 学生模型双版本 smoke 训练
+
+```yaml
+date: 2026-07-23
+status: CODE_READY_SERVER_RUN_PENDING
+purpose: validate_end_to_end_student_training_before_8000_pair_labels_finish
+data:
+  accepted_pairs: 184
+  deterministic_split:
+    train: 147
+    validation: 37
+  split_seed: 42
+  warning: graph_is_highly_disconnected_and_metrics_are_pipeline_smoke_evidence_only
+shared_training:
+  backbone: Qwen3.5-4B
+  tuning: LoRA
+  max_length: 1024
+  per_gpu_pair_batch_size: 1
+  gradient_accumulation_steps: 16
+  epochs: 3
+  checkpoint_every_epochs: 0.25
+  learning_rate: 2.0e-5
+  head_learning_rate: 1.0e-4
+  score_regularization_weight: 1.0e-4
+  seed: 42
+v1:
+  gpu: 0
+  objective: soft_Bradley_Terry_only
+  config: configs/v3_bt_smoke_v1.json
+v2:
+  gpu: 1
+  objective: soft_Bradley_Terry_plus_frozen10_auxiliary
+  config: configs/v3_bt_smoke_v2_aux10.json
+  feature_join_key: pair.question_id == frozen18.id
+  forbidden_supervision:
+    - difficulty
+    - raw_difficulty
+    - teacher_difficulty_id
+    - teacher_difficulty_level
+  auxiliary_loss:
+    normalized_per_head: CE / log(class_count)
+    aggregation: mean_across_10_heads_and_available_A_B_labels
+    maximum_weight: 0.1
+    warmup: linear_first_10_percent_optimizer_steps
+    class_weight: inverse_sqrt_frequency_clipped_0.5_to_2.0
+    example_weight: feature_quality_divided_by_question_degree
+decision_rule:
+  primary_metrics:
+    - pairwise_accuracy
+    - soft_pairwise_log_loss
+    - brier_score
+    - pairwise_auc
+  auxiliary_metrics_are_diagnostic_only: true
+  do_not_select_v2_because_auxiliary_accuracy_is_higher: true
+  require_same_validation_pairs_and_seed: true
+```

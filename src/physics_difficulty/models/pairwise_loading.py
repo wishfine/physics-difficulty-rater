@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 
 import torch
 from transformers import AutoModel, AutoTokenizer
@@ -29,9 +30,16 @@ def load_pairwise_rater(model_path: str, checkpoint_dir: str | Path, device: tor
     )
     from peft import PeftModel
     backbone = PeftModel.from_pretrained(base, checkpoint / "adapter", is_trainable=False)
-    model = QwenPairwiseRater(backbone).to(device)
+    config_path = checkpoint / "pairwise_config.json"
+    checkpoint_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
+    auxiliary_features = bool(checkpoint_config.get("auxiliary_features", False))
+    model = QwenPairwiseRater(backbone, auxiliary_features=auxiliary_features).to(device)
     state = torch.load(checkpoint / "pairwise_head.pt", map_location=device)
     model.norm.load_state_dict(state["norm"])
     model.score_head.load_state_dict(state["score_head"])
+    if auxiliary_features:
+        if "auxiliary_heads" not in state:
+            raise ValueError("V2 checkpoint is missing auxiliary_heads")
+        model.auxiliary_heads.load_state_dict(state["auxiliary_heads"])
     model.eval()
     return model, tokenizer

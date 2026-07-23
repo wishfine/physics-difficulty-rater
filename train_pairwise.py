@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from physics_difficulty.data.pairwise_dataset import PairwiseDifficultyDataset
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
+from physics_difficulty.pairwise.losses import auxiliary_loss_weight, normalized_auxiliary_loss
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +52,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--score-regularization-weight", type=float, default=1e-4)
+    parser.add_argument("--auxiliary-features", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--auxiliary-loss-weight", type=float, default=0.1)
+    parser.add_argument("--auxiliary-warmup-ratio", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
@@ -77,7 +81,10 @@ def save_checkpoint(model: torch.nn.Module, tokenizer: Any, optimizer: torch.opt
     checkpoint.mkdir(parents=True, exist_ok=True)
     raw.backbone.save_pretrained(checkpoint / "adapter")
     tokenizer.save_pretrained(checkpoint / "tokenizer")
-    torch.save({"norm": raw.norm.state_dict(), "score_head": raw.score_head.state_dict()}, checkpoint / "pairwise_head.pt")
+    head_state = {"norm": raw.norm.state_dict(), "score_head": raw.score_head.state_dict()}
+    if raw.auxiliary_features:
+        head_state["auxiliary_heads"] = raw.auxiliary_heads.state_dict()
+    torch.save(head_state, checkpoint / "pairwise_head.pt")
     torch.save(optimizer.state_dict(), checkpoint / "optimizer.pt")
     torch.save(scheduler.state_dict(), checkpoint / "scheduler.pt")
     (checkpoint / "trainer_state.json").write_text(json.dumps(trainer_state, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -92,6 +99,8 @@ def main() -> None:
             raise ValueError(f"{name} must be positive")
     if args.checkpoint_every_epochs <= 0 or not 0 <= args.warmup_ratio < 1:
         raise ValueError("checkpoint interval and warmup ratio are invalid")
+    if args.auxiliary_loss_weight < 0 or not 0 <= args.auxiliary_warmup_ratio <= 1:
+        raise ValueError("auxiliary loss settings are invalid")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -149,13 +158,17 @@ def main() -> None:
             bias="none",
             task_type="FEATURE_EXTRACTION",
         ))
-    model = QwenPairwiseRater(backbone).to(device)
+    model = QwenPairwiseRater(backbone, auxiliary_features=args.auxiliary_features).to(device)
     if resume_dir:
         state = torch.load(resume_dir / "pairwise_head.pt", map_location=device)
         model.norm.load_state_dict(state["norm"])
         model.score_head.load_state_dict(state["score_head"])
+        if args.auxiliary_features:
+            if "auxiliary_heads" not in state:
+                raise ValueError("cannot resume V2 training from a V1 checkpoint")
+            model.auxiliary_heads.load_state_dict(state["auxiliary_heads"])
 
-    head_parameters = list(model.norm.parameters()) + list(model.score_head.parameters())
+    head_parameters = list(model.norm.parameters()) + list(model.score_head.parameters()) + list(model.auxiliary_heads.parameters())
     head_ids = {id(parameter) for parameter in head_parameters}
     backbone_parameters = [parameter for parameter in model.parameters() if parameter.requires_grad and id(parameter) not in head_ids]
     optimizer = torch.optim.AdamW([
@@ -165,7 +178,7 @@ def main() -> None:
     if distributed:
         model = DDP(model, device_ids=[local_rank], output_device=local_rank, find_unused_parameters=False)
 
-    dataset = PairwiseDifficultyDataset(args.train_file, tokenizer, args.max_length)
+    dataset = PairwiseDifficultyDataset(args.train_file, tokenizer, args.max_length, require_auxiliary_features=args.auxiliary_features)
     micro_batches_per_epoch = math.ceil(len(dataset) / (args.batch_size * world_size))
     optimizer_steps_per_epoch = max(1, math.ceil(micro_batches_per_epoch / args.gradient_accumulation_steps))
     total_steps = optimizer_steps_per_epoch * args.num_train_epochs
@@ -191,13 +204,15 @@ def main() -> None:
             metrics_path.write_text("", encoding="utf-8")
         (output_dir / "training_config.json").write_text(json.dumps(vars(args), ensure_ascii=False, indent=2), encoding="utf-8")
         print(json.dumps({
-            "message": "Training soft Bradley-Terry only; run evaluate_pairwise.py separately.",
+            "message": "Training soft Bradley-Terry with optional normalized auxiliary supervision; run evaluate_pairwise.py separately.",
             "records": len(dataset),
             "world_size": world_size,
             "effective_pair_batch_size": args.batch_size * world_size * args.gradient_accumulation_steps,
             "optimizer_steps_per_epoch": optimizer_steps_per_epoch,
             "start_epoch": start_epoch,
             "resume_micro_step": resume_micro_step,
+            "auxiliary_features": args.auxiliary_features,
+            "auxiliary_loss_weight": args.auxiliary_loss_weight if args.auxiliary_features else 0.0,
         }, ensure_ascii=False), flush=True)
 
     for epoch in range(start_epoch, args.num_train_epochs):
@@ -222,7 +237,22 @@ def main() -> None:
             weights = batch["sample_weights"].to(device)
             pair_loss = weighted_mean(F.binary_cross_entropy_with_logits(outputs["pair_logits"].float(), targets, reduction="none"), weights)
             score_regularization = (outputs["score_a"].float().square().mean() + outputs["score_b"].float().square().mean()) / 2
+            aux_loss = None
+            current_aux_weight = 0.0
+            if args.auxiliary_features:
+                aux_loss = normalized_auxiliary_loss(
+                    outputs["auxiliary_logits_a"], outputs["auxiliary_logits_b"],
+                    {name: value.to(device) for name, value in batch["auxiliary_targets_a"].items()},
+                    {name: value.to(device) for name, value in batch["auxiliary_targets_b"].items()},
+                    batch["auxiliary_weights_a"].to(device), batch["auxiliary_weights_b"].to(device),
+                    dataset.feature_class_weights,
+                )
+                current_aux_weight = auxiliary_loss_weight(
+                    optimizer_step, total_steps, args.auxiliary_loss_weight, args.auxiliary_warmup_ratio,
+                )
             loss = pair_loss + args.score_regularization_weight * score_regularization
+            if aux_loss is not None:
+                loss = loss + current_aux_weight * aux_loss
             (loss / args.gradient_accumulation_steps).backward()
             loss_sum += float(loss.item())
             micro_count += 1
@@ -246,6 +276,11 @@ def main() -> None:
                         "optimizer_step": optimizer_step,
                         "last_loss": round(float(loss.item()), 6),
                         "last_pair_loss": round(float(pair_loss.item()), 6),
+                        "last_auxiliary_loss": round(float(aux_loss.item()), 6) if aux_loss is not None else None,
+                        "auxiliary_loss_weight": round(current_aux_weight, 6),
+                        "auxiliary_contribution_ratio": round(
+                            current_aux_weight * float(aux_loss.item()) / max(float(pair_loss.item()), 1e-8), 6
+                        ) if aux_loss is not None else 0.0,
                         "last_brier": round(float(brier), 6),
                         "optimizer_updates_per_second": round((updates_in_epoch - last_log_update) / elapsed, 4),
                     }, ensure_ascii=False), flush=True)

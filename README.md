@@ -156,3 +156,29 @@ calibration procedure.
 The append-only [experiment log](docs/experiment_log.md) records data versions,
 run parameters, failures, key teacher/student metrics, artifact locations, and
 the exact information to copy from the server for future updates.
+
+### V3 student V1/V2 smoke comparison
+
+The student smoke test runs two matched single-GPU experiments. V1 learns only
+the scalar Bradley-Terry score. V2 retains the identical scalar score and adds
+the frozen ten categorical feature heads. V2 joins features by question ID from
+the curated frozen18 file; it never reads the historical `difficulty` field or
+the old absolute difficulty label as supervision.
+
+```bash
+python scripts/attach_pairwise_auxiliary_features.py \
+  --pairs "$SMOKE/data/train.jsonl" \
+  --features data/curated/physics_teacher_v2_frozen18.jsonl \
+  --output "$SMOKE/data/train_aux10.jsonl" \
+  --manifest "$SMOKE/data/train_aux10.manifest.json" \
+  --minimum-question-coverage 0.95
+```
+
+V2 uses a normalized auxiliary loss so a nine-class head does not dominate a
+three-class head merely because its random-guess cross-entropy is larger. The
+ten normalized heads are averaged, and their aggregate coefficient warms from
+0 to 0.1 during the first 10% of optimizer steps. Per-head inverse-square-root
+class weights are clipped to `[0.5, 2.0]`. Feature quality and inverse graph
+degree affect only the auxiliary loss; pair reliability affects only the
+Bradley-Terry loss. Auxiliary predictions are explanatory outputs and never
+apply a post-hoc difficulty rule.

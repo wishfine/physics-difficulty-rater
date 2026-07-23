@@ -27,6 +27,7 @@ def main() -> None:
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--auxiliary-features", action=argparse.BooleanOptionalAction, default=False)
     args = parser.parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -42,12 +43,16 @@ def main() -> None:
     from peft import LoraConfig, get_peft_model
     targets = sorted({name.split(".")[-1] for name, module in base.named_modules() if isinstance(module, torch.nn.Linear)})
     backbone = get_peft_model(base, LoraConfig(r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, target_modules=targets, bias="none", task_type="FEATURE_EXTRACTION"))
-    model = QwenPairwiseRater(backbone).to(device)
+    model = QwenPairwiseRater(backbone, auxiliary_features=args.auxiliary_features).to(device)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     model.backbone.save_pretrained(output / "adapter")
     tokenizer.save_pretrained(output / "tokenizer")
-    torch.save({"norm": model.norm.state_dict(), "score_head": model.score_head.state_dict()}, output / "pairwise_head.pt")
+    head_state = {"norm": model.norm.state_dict(), "score_head": model.score_head.state_dict()}
+    if args.auxiliary_features:
+        head_state["auxiliary_heads"] = model.auxiliary_heads.state_dict()
+    torch.save(head_state, output / "pairwise_head.pt")
+    (output / "pairwise_config.json").write_text(json.dumps({"auxiliary_features": args.auxiliary_features}, indent=2), encoding="utf-8")
     state = {"schema_version": "pairwise_initial_checkpoint_v1", "model_path": str(Path(args.model_path).resolve()), "seed": args.seed, "training_steps": 0}
     (output / "initial_state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({**state, "checkpoint_dir": str(output.resolve())}, ensure_ascii=False))
