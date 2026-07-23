@@ -985,3 +985,31 @@ decision_rule:
   do_not_select_v2_because_auxiliary_accuracy_is_higher: true
   require_same_validation_pairs_and_seed: true
 ```
+
+### 首次 V1/V2 smoke 运行审计
+
+```yaml
+date: 2026-07-23
+split:
+  train_pairs: 147
+  validation_pairs: 37
+  train_questions: 273
+  validation_questions: 67
+  question_overlap: 0
+v1:
+  status: VALID_PIPELINE_SMOKE
+  epoch_3_validation:
+    pairwise_accuracy: 0.7567567568
+    soft_pairwise_log_loss: 0.6179362182
+    brier_score: 0.0942344724
+    pairwise_auc: 0.7516666667
+v2_attempt_1:
+  status: INVALID_NOT_A_V2_RUN
+  evidence:
+    training_config_auxiliary_features: false
+    runtime_auxiliary_loss_weight: 0.0
+    last_auxiliary_loss: null
+    evaluation_auxiliary_metrics_present: false
+  root_cause: argparse_argument_defaults_overrode_JSON_config_defaults
+  action: fix_config_precedence_and_rerun_V2_in_new_output_directory
+```

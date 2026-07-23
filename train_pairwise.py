@@ -33,7 +33,6 @@ def parse_args() -> argparse.Namespace:
     known, _ = bootstrap.parse_known_args()
     defaults = json.loads(Path(known.config).read_text(encoding="utf-8")) if known.config else {}
     parser = argparse.ArgumentParser(parents=[bootstrap])
-    parser.set_defaults(**defaults)
     parser.add_argument("--model-path", required=True)
     parser.add_argument("--train-file", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -58,6 +57,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=True)
+    known_destinations = {action.dest for action in parser._actions}
+    unknown_config_keys = sorted(set(defaults) - known_destinations)
+    if unknown_config_keys:
+        raise ValueError(f"unknown pairwise training config keys: {unknown_config_keys}")
+    # Apply JSON defaults after registering arguments; argparse otherwise lets
+    # each add_argument(default=...) silently overwrite the config value.
+    parser.set_defaults(**defaults)
     return parser.parse_args()
 
 
