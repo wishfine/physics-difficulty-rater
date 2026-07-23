@@ -931,9 +931,15 @@ status: CODE_READY_SERVER_RUN_PENDING
 purpose: validate_end_to_end_student_training_before_8000_pair_labels_finish
 data:
   accepted_pairs: 184
-  deterministic_split:
+  superseded_pair_id_split:
     train: 147
     validation: 37
+    minimum_question_overlap: 6
+    usage: forbidden_due_to_question_leakage
+  required_split:
+    unit: comparison_graph_connected_component
+    question_overlap: 0
+    target_validation_ratio: 0.20
   split_seed: 42
   warning: graph_is_highly_disconnected_and_metrics_are_pipeline_smoke_evidence_only
 shared_training:

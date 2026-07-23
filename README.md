@@ -165,6 +165,12 @@ the frozen ten categorical feature heads. V2 joins features by question ID from
 the curated frozen18 file; it never reads the historical `difficulty` field or
 the old absolute difficulty label as supervision.
 
+Split finalized pair data with `scripts/split_pairwise_by_component.py`. The
+unit of assignment is a connected component of the comparison graph, not an
+individual pair: this guarantees that no question ID is shared by train and
+validation. A pair-ID-level random split is forbidden because any shared node
+would leak a learned question score into validation.
+
 ```bash
 python scripts/attach_pairwise_auxiliary_features.py \
   --pairs "$SMOKE/data/train.jsonl" \

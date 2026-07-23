@@ -193,6 +193,36 @@ class PairwiseTests(unittest.TestCase):
             self.assertEqual(report["records"], 6)
             self.assertEqual(report["graph"]["node_coverage"], 1.0)
 
+    def test_component_split_has_no_question_leakage(self):
+        rows = [
+            {"pair_id": "p1", "question_a_id": "a", "question_b_id": "b"},
+            {"pair_id": "p2", "question_a_id": "b", "question_b_id": "c"},
+            {"pair_id": "p3", "question_a_id": "d", "question_b_id": "e"},
+            {"pair_id": "p4", "question_a_id": "f", "question_b_id": "g"},
+            {"pair_id": "p5", "question_a_id": "h", "question_b_id": "i"},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            source = directory / "all.jsonl"
+            train = directory / "train.jsonl"
+            validation = directory / "validation.jsonl"
+            manifest = directory / "manifest.json"
+            source.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "split_pairwise_by_component.py"),
+                "--input", str(source), "--train-output", str(train),
+                "--validation-output", str(validation), "--manifest", str(manifest),
+                "--validation-ratio", "0.4", "--seed", "42",
+            ], check=True, capture_output=True, text=True)
+            train_rows = [json.loads(line) for line in train.read_text().splitlines()]
+            validation_rows = [json.loads(line) for line in validation.read_text().splitlines()]
+            train_ids = {str(row[key]) for row in train_rows for key in ("question_a_id", "question_b_id")}
+            validation_ids = {str(row[key]) for row in validation_rows for key in ("question_a_id", "question_b_id")}
+            self.assertFalse(train_ids & validation_ids)
+            self.assertEqual(len(train_rows) + len(validation_rows), len(rows))
+            report = json.loads(manifest.read_text())
+            self.assertEqual(report["question_overlap"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
