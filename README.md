@@ -199,3 +199,8 @@ class weights are clipped to `[0.5, 2.0]`. Feature quality and inverse graph
 degree affect only the auxiliary loss; pair reliability affects only the
 Bradley-Terry loss. Auxiliary predictions are explanatory outputs and never
 apply a post-hoc difficulty rule.
+
+Formal 7509-pair pilot training uses the matched
+`configs/v3_bt_production_v1.json` and
+`configs/v3_bt_production_v2_aux10.json` configs. Run them as independent
+single-GPU jobs; do not launch both versions through one DDP job.

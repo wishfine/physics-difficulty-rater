@@ -1094,3 +1094,45 @@ estimated_wall_time_on_two_A800: 10_to_14_hours
 此 validation 只用于选 checkpoint 和判断过拟合；不能从 7509 条训练边随机拆分，
 也不能使用 test/OOT 调参。最终 manifest 从本版本开始同时记录 cascade routing 阈值和
 `0.15/0.30` reliability 阈值。
+
+## 12. 7509 对学生模型正式双版本训练
+
+```yaml
+date: 2026-07-24
+status: CODE_READY_SERVER_RUN_PENDING
+shared:
+  backbone: Qwen3.5-4B
+  train_pairs: 7509
+  epochs: 3
+  max_length: 1024
+  per_gpu_pair_batch_size: 1
+  gradient_accumulation_steps: 16
+  effective_pair_batch_size: 16
+  checkpoint_every_epochs: 0.25
+  lora:
+    rank: 8
+    alpha: 16
+    dropout: 0.05
+  learning_rate:
+    lora: 2.0e-5
+    heads: 1.0e-4
+  seed: 42
+v1:
+  gpu: 2
+  config: configs/v3_bt_production_v1.json
+  objective: soft_Bradley_Terry
+v2:
+  gpu: 3
+  config: configs/v3_bt_production_v2_aux10.json
+  objective: soft_Bradley_Terry_plus_frozen10_auxiliary
+  auxiliary_maximum_weight: 0.1
+  auxiliary_warmup_ratio: 0.1
+concurrency:
+  validation_teacher: GPUs_0_1
+  student_v1: GPU_2
+  student_v2: GPU_3
+selection:
+  wait_for_independent_validation_labels: true
+  primary_metric: validation_soft_pairwise_log_loss
+  test_used_for_selection: false
+```

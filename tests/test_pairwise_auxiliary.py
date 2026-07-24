@@ -52,6 +52,21 @@ def features(first=False):
 
 
 class PairwiseAuxiliaryTests(unittest.TestCase):
+    def test_production_v1_v2_configs_differ_only_in_auxiliary_objective(self):
+        v1 = json.loads((ROOT / "configs" / "v3_bt_production_v1.json").read_text(encoding="utf-8"))
+        v2 = json.loads((ROOT / "configs" / "v3_bt_production_v2_aux10.json").read_text(encoding="utf-8"))
+        self.assertFalse(v1["auxiliary_features"])
+        self.assertEqual(v1["auxiliary_loss_weight"], 0.0)
+        self.assertTrue(v2["auxiliary_features"])
+        self.assertEqual(v2["auxiliary_loss_weight"], 0.1)
+        ignored = {"auxiliary_features", "auxiliary_loss_weight"}
+        self.assertEqual(
+            {key: value for key, value in v1.items() if key not in ignored},
+            {key: value for key, value in v2.items() if key not in ignored},
+        )
+        self.assertEqual(v2["checkpoint_every_epochs"], 0.25)
+        self.assertEqual(v2["num_train_epochs"], 3)
+
     def test_join_uses_only_id_features_and_quality_not_absolute_difficulty(self):
         pair = {
             "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
