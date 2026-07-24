@@ -204,3 +204,9 @@ Formal 7509-pair pilot training uses the matched
 `configs/v3_bt_production_v1.json` and
 `configs/v3_bt_production_v2_aux10.json` configs. Run them as independent
 single-GPU jobs; do not launch both versions through one DDP job.
+
+Use `scripts/evaluate_pairwise_checkpoint_series.py` to evaluate the untrained
+seed-matched baseline followed by every complete quarter-epoch checkpoint. The
+runner waits for independent validation labels and future checkpoints, resumes
+by skipping existing metric files, and automatically attaches frozen ten
+features for V2 when `--features-file` is provided.

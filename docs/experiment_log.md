@@ -1136,3 +1136,37 @@ selection:
   primary_metric: validation_soft_pairwise_log_loss
   test_used_for_selection: false
 ```
+
+### 正式checkpoint序列评测
+
+```yaml
+date: 2026-07-24
+status: CODE_READY_SERVER_RUN_PENDING
+validation:
+  source: validation_2000_v1/final/validation_pairs.jsonl
+  train_question_overlap: 0
+evaluation_order:
+  - checkpoint_initial
+  - every_complete_checkpoint_sorted_by_optimizer_step
+  - checkpoint_epoch_3
+execution:
+  v1_gpu: 4
+  v2_gpu: 5
+  wait_for_validation_labels: true
+  wait_for_future_checkpoints: true
+  skip_existing_results_on_resume: true
+v2:
+  attach_frozen10_validation_features: true
+selection:
+  primary: soft_pairwise_log_loss
+  secondary:
+    - brier_score
+    - pairwise_auc
+    - pairwise_accuracy
+  auxiliary_metrics: diagnostic_only
+```
+
+评测必须从相同seed生成的未训练LoRA和随机head开始，不能把基础模型缺少head的输出
+当作baseline。V1和V2分别在GPU 4、5上串行评各自的checkpoint；单个GPU内禁止同时加载
+多个checkpoint。监督器只在`adapter/`、`pairwise_head.pt`、`pairwise_config.json`和
+`trainer_state.json`全部存在后才开始评测，避免读到训练进程正在写入的半成品。
