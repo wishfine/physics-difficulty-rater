@@ -393,6 +393,54 @@ pair loss、Brier 和速度。
 正式训练前先创建同 seed 的随机 LoRA/标量头基线，并在同一 validation pair 上跑一次。
 它应接近 `P(A>B)=0.5`，用于证明提升来自 pairwise 训练：
 
+### 9.1 独立 validation 比较图
+
+pilot 阶段固定使用原始 validation split 中按 SHA256 选出的 500 道题，建立 2000 条边：
+
+```bash
+PAIR_ROOT=/data/$USER/physics-difficulty-runtime/pairwise_v3
+VALIDATION_ROOT="$PAIR_ROOT/validation_2000_v1"
+
+python scripts/build_raw_v3_pair_candidates.py \
+  --config configs/pair_sampling_raw_v3_validation.json \
+  --questions "$PAIR_ROOT/questions/validation.jsonl" \
+  --output "$VALIDATION_ROOT/candidates.jsonl" \
+  --selected-questions-output "$VALIDATION_ROOT/questions.jsonl" \
+  --manifest "$VALIDATION_ROOT/candidates.manifest.json"
+
+python scripts/validate_question_split_isolation.py \
+  --questions "$PAIR_ROOT/pilot/questions.jsonl" \
+  --questions "$VALIDATION_ROOT/questions.jsonl" \
+  --output "$VALIDATION_ROOT/split_isolation.json"
+```
+
+`split_isolation.json` 必须为 `PASS` 且 question ID overlap 为 0，才允许启动 teacher。
+验证图与训练图使用相同的候选边规则和 cascade 阈值，但题目集合完全独立：
+
+```bash
+TEACHER=/home/share_ssd_data/nfs-env/llm_models/Qwen/Qwen3-32B
+mkdir -p "$VALIDATION_ROOT/logs"
+
+nohup bash scripts/server_run_validation_pairwise_labels.sh \
+  "$TEACHER" \
+  "$VALIDATION_ROOT/candidates.jsonl" \
+  "$VALIDATION_ROOT/questions.jsonl" \
+  "$VALIDATION_ROOT" \
+  4,5 \
+  6,7 \
+  > "$VALIDATION_ROOT/logs/cascade.log" 2>&1 &
+```
+
+最终评估文件为：
+
+```text
+$VALIDATION_ROOT/final/validation_pairs.jsonl
+```
+
+2000 条只是 teacher 候选边数；高位置偏差 pair 会隔离，因此最终有效数可能小于 2000。
+不得为了凑整重新放回隔离数据。按 8000 对生产运行的实测速度，四张 A800 预计约需
+5–7 小时，实际取决于升级至 thinking 的比例。
+
 ```bash
 python scripts/create_initial_pairwise_checkpoint.py \
   --model-path "$STUDENT" \

@@ -121,7 +121,14 @@ def main() -> None:
         "stats": dict(stats),
         "soft_targets": soft_target_distribution(row["soft_target"] for row in accepted),
         "graph": graph_metrics(accepted, expected_nodes),
+        # Keep the legacy key so old analysis notebooks continue to load, and
+        # record both threshold families explicitly for reproducibility.
         "thresholds": vars(thresholds),
+        "routing_thresholds": vars(thresholds),
+        "reliability_thresholds": {
+            "stable_max_position_bias_gap": args.medium_reliability_gap,
+            "quarantine_above_position_bias_gap": args.high_reliability_gap,
+        },
         "images_uploaded": False,
         "raw_difficulty_used": False,
     }

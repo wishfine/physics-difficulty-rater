@@ -149,6 +149,16 @@ After validation passes, use `server_run_cascade_production.sh` for the complete
 Bradley-Terry records to `final/train_pairs.jsonl`. Raw vote files are
 append-only and resumable.
 
+For checkpoint selection, build a separate graph from the raw V3
+`questions/validation.jsonl` split with
+`configs/pair_sampling_raw_v3_validation.json`. The registered pilot validation
+set uses 500 questions and 2000 edges. Run
+`validate_question_split_isolation.py` against the selected train and
+validation question files before teacher inference, then label it with
+`server_run_validation_pairwise_labels.sh`. Its final output is
+`final/validation_pairs.jsonl`; never split the 8000 train edges to manufacture
+a validation set.
+
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold
 calibration procedure.

@@ -223,6 +223,113 @@ class PairwiseTests(unittest.TestCase):
             report = json.loads(manifest.read_text())
             self.assertEqual(report["question_overlap"], 0)
 
+    def test_question_split_isolation_report_rejects_cross_split_overlap(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            train = directory / "train.jsonl"
+            validation = directory / "validation.jsonl"
+            report = directory / "report.json"
+            train.write_text(
+                "\n".join([
+                    json.dumps({"id": "q1", "split": "train"}),
+                    json.dumps({"id": "q2", "split": "train"}),
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            validation.write_text(
+                "\n".join([
+                    json.dumps({"id": "q2", "split": "validation"}),
+                    json.dumps({"id": "q3", "split": "validation"}),
+                ]) + "\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "validate_question_split_isolation.py"),
+                "--questions", str(train),
+                "--questions", str(validation),
+                "--output", str(report),
+            ], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            payload = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "FAIL")
+            self.assertEqual(payload["overlaps"][0]["count"], 1)
+            self.assertEqual(payload["overlaps"][0]["sample_ids"], ["q2"])
+
+    def test_finalizer_manifest_records_both_routing_and_reliability_thresholds(self):
+        pair = {
+            "schema_version": "raw_v3_pair_candidate_v1",
+            "pair_id": "validation_pair",
+            "split": "validation",
+            "question_a_id": "qa",
+            "question_b_id": "qb",
+            "question_a_text": "甲题",
+            "question_b_text": "乙题",
+            "pair_source": "random_global",
+            "metadata": {},
+        }
+        votes = [
+            {
+                "pair_id": pair["pair_id"],
+                "question_a_id": "qa",
+                "question_b_id": "qb",
+                "direction": direction,
+                "winner_question_id": "qa",
+                "valid": True,
+                "sample_index": index,
+            }
+            for direction in ("forward", "backward")
+            for index in range(3)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            pairs = directory / "pairs.jsonl"
+            nonthinking = directory / "nonthinking.jsonl"
+            thinking = directory / "thinking.jsonl"
+            output = directory / "validation_pairs.jsonl"
+            quarantine = directory / "quarantine.jsonl"
+            manifest = directory / "manifest.json"
+            pairs.write_text(json.dumps(pair) + "\n", encoding="utf-8")
+            nonthinking.write_text("".join(json.dumps(row) + "\n" for row in votes), encoding="utf-8")
+            thinking.write_text("", encoding="utf-8")
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "finalize_cascade_pairwise_data.py"),
+                "--pairs", str(pairs),
+                "--nonthinking-votes", str(nonthinking),
+                "--thinking-votes", str(thinking),
+                "--output", str(output),
+                "--quarantine-output", str(quarantine),
+                "--manifest", str(manifest),
+                "--medium-reliability-gap", "0.12",
+                "--high-reliability-gap", "0.28",
+            ], check=True, capture_output=True, text=True)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(payload["routing_thresholds"]["max_position_bias_gap"], 0.25)
+            self.assertEqual(payload["reliability_thresholds"], {
+                "stable_max_position_bias_gap": 0.12,
+                "quarantine_above_position_bias_gap": 0.28,
+            })
+
+    def test_validation_pair_sampling_config_is_pre_registered(self):
+        config = json.loads(
+            (ROOT / "configs" / "pair_sampling_raw_v3_validation.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(config, {
+            "seed": 20260724,
+            "max_questions": 500,
+            "target_pairs": 2000,
+            "minimum_degree": 4,
+            "maximum_degree": 12,
+        })
+
+    def test_validation_labeling_runner_has_a_strict_cli_contract(self):
+        runner = ROOT / "scripts" / "server_run_validation_pairwise_labels.sh"
+        result = subprocess.run(["bash", str(runner)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "MODEL_PATH PAIRS_FILE QUESTIONS_FILE OUTPUT_ROOT [GPU_PAIR_1] [GPU_PAIR_2]",
+            result.stderr,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

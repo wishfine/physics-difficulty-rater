@@ -1013,3 +1013,83 @@ v2_attempt_1:
   root_cause: argparse_argument_defaults_overrode_JSON_config_defaults
   action: fix_config_precedence_and_rerun_V2_in_new_output_directory
 ```
+
+## 10. 8000 对生产 teacher 打标完成
+
+```yaml
+date_completed: 2026-07-23
+status: PASS
+teacher: Qwen3-32B
+candidate_pairs: 8000
+accepted_pairs: 7509
+quarantined_pairs: 491
+acceptance_rate: 0.938625
+label_source:
+  nonthinking: 4935
+  thinking_1024: 2574
+reliability:
+  stable_weight_1.0: 5954
+  order_sensitive_weight_0.5: 1555
+quarantine:
+  high_final_position_bias: 491
+thinking:
+  escalated_pairs: 3065
+  vote_rows: 32895
+  valid_votes: 32432
+  parse_success_rate: 0.9859249126
+soft_targets:
+  clear_a: 3427
+  clear_b: 3802
+  uncertain: 280
+  mean_entropy: 0.4175829818
+  mean_distance_from_half: 0.3453500076
+graph_after_quarantine:
+  nodes: 2000
+  edges: 7509
+  node_coverage: 1.0
+  connected_components: 1
+  minimum_degree: 3
+  median_degree: 8
+  mean_degree: 7.509
+  maximum_degree: 12
+validation_report:
+  status: PASS
+  errors: 0
+  warnings: 0
+raw_difficulty_used: false
+images_uploaded: false
+```
+
+`shard-001` 在八轮自适应补票后仍有少量 prompt 未达到期望的 5/10 票，但最终没有
+`insufficient_thinking_1024_votes` 隔离记录；所有进入最终判断的数据都满足每个方向至少
+3 个有效票。491 对全部因为最终正反序概率差超过 0.30 被隔离，过滤后比较图仍保持
+2000 节点单连通。
+
+## 11. Pilot 独立 validation 图预注册
+
+```yaml
+date: 2026-07-24
+status: CODE_READY_SERVER_RUN_PENDING
+source_split: validation
+sampling:
+  config: configs/pair_sampling_raw_v3_validation.json
+  seed: 20260724
+  selected_questions: 500
+  candidate_pairs: 2000
+  minimum_degree: 4
+  maximum_degree: 12
+teacher_pipeline:
+  nonthinking_votes_per_direction: 3
+  thinking_mode: thinking_1024
+  gpu_pair_1: 4,5
+  gpu_pair_2: 6,7
+required_precondition:
+  train_validation_question_overlap: 0
+  isolation_artifact: validation_2000_v1/split_isolation.json
+final_output: validation_2000_v1/final/validation_pairs.jsonl
+estimated_wall_time_on_four_A800: 5_to_7_hours
+```
+
+此 validation 只用于选 checkpoint 和判断过拟合；不能从 7509 条训练边随机拆分，
+也不能使用 test/OOT 调参。最终 manifest 从本版本开始同时记录 cascade routing 阈值和
+`0.15/0.30` reliability 阈值。
