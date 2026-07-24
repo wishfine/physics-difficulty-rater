@@ -22,14 +22,22 @@ if [[ ! -f "$PAIRS_FILE" || ! -f "$QUESTIONS_FILE" ]]; then
   echo "Missing pair or question input" >&2
   exit 1
 fi
-if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]; then
-  echo "GPU pairs must be different" >&2
-  exit 1
-fi
 PAIR_COUNT=$(grep -cve '^[[:space:]]*$' "$PAIRS_FILE")
 if [[ "$PAIR_COUNT" -ne 2000 ]]; then
   echo "Validation input must contain exactly 2000 pairs, got $PAIR_COUNT" >&2
   exit 1
+fi
+if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]; then
+  THINKING_EXECUTION=sequential
+else
+  THINKING_EXECUTION=parallel
+fi
+if [[ "${PAIRWISE_LABELING_DRY_RUN:-0}" == "1" ]]; then
+  echo "thinking_execution=$THINKING_EXECUTION"
+  echo "gpu_pair_1=$GPU_PAIR_1"
+  echo "gpu_pair_2=$GPU_PAIR_2"
+  echo "pair_count=$PAIR_COUNT"
+  exit 0
 fi
 
 mkdir -p "$OUTPUT_ROOT"/{logs,nonthinking,routing,thinking_1024/shard-000,thinking_1024/shard-001,final}
@@ -71,47 +79,50 @@ python scripts/split_pair_file.py \
   --manifest "$OUTPUT_ROOT/routing/thinking_shards.manifest.json" \
   --shards 2 --seed 20260724
 
-pids=()
-cleanup() {
-  for pid in "${pids[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
+run_thinking_shard() {
+  local shard_index=$1
+  local gpu_pair=$2
+  local vote_output=$3
+  local log_file="$OUTPUT_ROOT/logs/thinking_1024_shard-${shard_index}.log"
+  printf '\n[%s] Thinking validation shard %s on GPUs %s (%s)\n' \
+    "$(date --iso-8601=seconds)" "$shard_index" "$gpu_pair" "$THINKING_EXECUTION" >> "$log_file"
+  env CUDA_VISIBLE_DEVICES="$gpu_pair" python scripts/run_local_pairwise_teacher.py \
+    --config configs/qwen3_32b_pairwise_teacher_thinking_1024.json \
+    --model-path "$MODEL_PATH" \
+    --pairs "$SHARDS/shard-${shard_index}.jsonl" \
+    --raw-votes-output "$vote_output" \
+    --manifest "$OUTPUT_ROOT/thinking_1024/shard-${shard_index}/teacher.manifest.json" \
+    >> "$log_file" 2>&1
 }
-trap cleanup INT TERM EXIT
 
-printf '\n[%s] Thinking validation shard 0 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_1" \
-  >> "$OUTPUT_ROOT/logs/thinking_1024_shard-000.log"
-env CUDA_VISIBLE_DEVICES="$GPU_PAIR_1" python scripts/run_local_pairwise_teacher.py \
-  --config configs/qwen3_32b_pairwise_teacher_thinking_1024.json \
-  --model-path "$MODEL_PATH" \
-  --pairs "$SHARDS/shard-000.jsonl" \
-  --raw-votes-output "$THINKING_0" \
-  --manifest "$OUTPUT_ROOT/thinking_1024/shard-000/teacher.manifest.json" \
-  >> "$OUTPUT_ROOT/logs/thinking_1024_shard-000.log" 2>&1 &
-pids+=("$!")
+if [[ "$THINKING_EXECUTION" == "sequential" ]]; then
+  run_thinking_shard "000" "$GPU_PAIR_1" "$THINKING_0"
+  run_thinking_shard "001" "$GPU_PAIR_2" "$THINKING_1"
+else
+  pids=()
+  cleanup() {
+    for pid in "${pids[@]:-}"; do
+      if kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null || true
+      fi
+    done
+  }
+  trap cleanup INT TERM EXIT
+  run_thinking_shard "000" "$GPU_PAIR_1" "$THINKING_0" &
+  pids+=("$!")
+  run_thinking_shard "001" "$GPU_PAIR_2" "$THINKING_1" &
+  pids+=("$!")
 
-printf '\n[%s] Thinking validation shard 1 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_2" \
-  >> "$OUTPUT_ROOT/logs/thinking_1024_shard-001.log"
-env CUDA_VISIBLE_DEVICES="$GPU_PAIR_2" python scripts/run_local_pairwise_teacher.py \
-  --config configs/qwen3_32b_pairwise_teacher_thinking_1024.json \
-  --model-path "$MODEL_PATH" \
-  --pairs "$SHARDS/shard-001.jsonl" \
-  --raw-votes-output "$THINKING_1" \
-  --manifest "$OUTPUT_ROOT/thinking_1024/shard-001/teacher.manifest.json" \
-  >> "$OUTPUT_ROOT/logs/thinking_1024_shard-001.log" 2>&1 &
-pids+=("$!")
-
-status=0
-for pid in "${pids[@]}"; do
-  if ! wait "$pid"; then status=1; fi
-done
-pids=()
-trap - INT TERM EXIT
-if [[ "$status" -ne 0 ]]; then
-  echo "Thinking validation shard failed; inspect $OUTPUT_ROOT/logs" >&2
-  exit 1
+  status=0
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then status=1; fi
+  done
+  pids=()
+  trap - INT TERM EXIT
+  if [[ "$status" -ne 0 ]]; then
+    echo "Thinking validation shard failed; inspect $OUTPUT_ROOT/logs" >&2
+    exit 1
+  fi
 fi
 
 python scripts/merge_teacher_vote_shards.py \

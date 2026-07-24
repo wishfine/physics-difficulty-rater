@@ -1081,13 +1081,14 @@ sampling:
 teacher_pipeline:
   nonthinking_votes_per_direction: 3
   thinking_mode: thinking_1024
-  gpu_pair_1: 4,5
-  gpu_pair_2: 6,7
+  gpu_pair_1: 0,1
+  gpu_pair_2: 0,1
+  thinking_execution: sequential
 required_precondition:
   train_validation_question_overlap: 0
   isolation_artifact: validation_2000_v1/split_isolation.json
 final_output: validation_2000_v1/final/validation_pairs.jsonl
-estimated_wall_time_on_four_A800: 5_to_7_hours
+estimated_wall_time_on_two_A800: 10_to_14_hours
 ```
 
 此 validation 只用于选 checkpoint 和判断过拟合；不能从 7509 条训练边随机拆分，

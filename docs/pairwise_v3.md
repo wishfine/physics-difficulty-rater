@@ -426,8 +426,8 @@ nohup bash scripts/server_run_validation_pairwise_labels.sh \
   "$VALIDATION_ROOT/candidates.jsonl" \
   "$VALIDATION_ROOT/questions.jsonl" \
   "$VALIDATION_ROOT" \
-  4,5 \
-  6,7 \
+  0,1 \
+  0,1 \
   > "$VALIDATION_ROOT/logs/cascade.log" 2>&1 &
 ```
 
@@ -438,8 +438,10 @@ $VALIDATION_ROOT/final/validation_pairs.jsonl
 ```
 
 2000 条只是 teacher 候选边数；高位置偏差 pair 会隔离，因此最终有效数可能小于 2000。
-不得为了凑整重新放回隔离数据。按 8000 对生产运行的实测速度，四张 A800 预计约需
-5–7 小时，实际取决于升级至 thinking 的比例。
+不得为了凑整重新放回隔离数据。两次传入同一个 `0,1` GPU pair 时，两个 thinking
+分片自动串行，完全不占用其他 GPU；按 8000 对生产运行的实测速度预计约需 10–14 小时。
+若以后传入两组不同的 TP=2 GPU，则自动并行，预计约需 5–7 小时。实际耗时取决于升级
+至 thinking 的比例。
 
 ```bash
 python scripts/create_initial_pairwise_checkpoint.py \

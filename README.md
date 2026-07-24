@@ -157,7 +157,8 @@ set uses 500 questions and 2000 edges. Run
 validation question files before teacher inference, then label it with
 `server_run_validation_pairwise_labels.sh`. Its final output is
 `final/validation_pairs.jsonl`; never split the 8000 train edges to manufacture
-a validation set.
+a validation set. Pass the same TP=2 GPU pair twice to run the two thinking
+shards sequentially when only two GPUs are available.
 
 See [docs/pairwise_v3.md](docs/pairwise_v3.md) for the complete data contract,
 pilot commands, acceptance criteria, training, evaluation, and fixed-threshold

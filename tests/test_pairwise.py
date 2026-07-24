@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -329,6 +330,27 @@ class PairwiseTests(unittest.TestCase):
             "MODEL_PATH PAIRS_FILE QUESTIONS_FILE OUTPUT_ROOT [GPU_PAIR_1] [GPU_PAIR_2]",
             result.stderr,
         )
+
+    def test_validation_labeling_runner_plans_sequential_shards_on_one_gpu_pair(self):
+        runner = ROOT / "scripts" / "server_run_validation_pairwise_labels.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            model = directory / "model"
+            model.mkdir()
+            (model / "config.json").write_text("{}\n", encoding="utf-8")
+            pairs = directory / "pairs.jsonl"
+            pairs.write_text("{}\n" * 2000, encoding="utf-8")
+            questions = directory / "questions.jsonl"
+            questions.write_text("{}\n", encoding="utf-8")
+            result = subprocess.run([
+                "bash", str(runner),
+                str(model), str(pairs), str(questions), str(directory / "run"),
+                "0,1", "0,1",
+            ], env={**os.environ, "PAIRWISE_LABELING_DRY_RUN": "1"}, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("thinking_execution=sequential", result.stdout)
+            self.assertIn("gpu_pair_1=0,1", result.stdout)
+            self.assertIn("gpu_pair_2=0,1", result.stdout)
 
 
 if __name__ == "__main__":
