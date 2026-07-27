@@ -55,3 +55,14 @@ Before production, run the independent 200-pair validation implemented by
 smoke, runs thinking_1024 on all 200 pairs for comparison, and exports a blind
 human-audit set. The route may expand only if both the automatic gate and human
 audit pass. `docs/experiment_log.md` remains the canonical detailed record.
+
+V3 auxiliary-weight follow-up (2026-07-27)
+===========================================
+
+The independent 1,891-pair validation selected V1 step 1176 at soft pairwise
+log loss 0.495801. V2 with auxiliary weight 0.1 selected step 706 at 0.498750;
+its auxiliary heads learned useful features, but its main ranking metrics were
+slightly worse than V1. Run one controlled follow-up with auxiliary weight
+0.03. Keep the dataset, seed, LoRA, optimizer, schedule, three epochs, and
+quarter-epoch checkpoints unchanged. The new run must use a separate output
+directory and be selected by the same validation soft pairwise log loss.

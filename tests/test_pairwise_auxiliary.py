@@ -52,20 +52,23 @@ def features(first=False):
 
 
 class PairwiseAuxiliaryTests(unittest.TestCase):
-    def test_production_v1_v2_configs_differ_only_in_auxiliary_objective(self):
+    def test_production_auxiliary_ablation_configs_change_only_the_objective(self):
         v1 = json.loads((ROOT / "configs" / "v3_bt_production_v1.json").read_text(encoding="utf-8"))
         v2 = json.loads((ROOT / "configs" / "v3_bt_production_v2_aux10.json").read_text(encoding="utf-8"))
+        v3 = json.loads((ROOT / "configs" / "v3_bt_production_v3_aux10_w003.json").read_text(encoding="utf-8"))
         self.assertFalse(v1["auxiliary_features"])
         self.assertEqual(v1["auxiliary_loss_weight"], 0.0)
         self.assertTrue(v2["auxiliary_features"])
         self.assertEqual(v2["auxiliary_loss_weight"], 0.1)
+        self.assertTrue(v3["auxiliary_features"])
+        self.assertEqual(v3["auxiliary_loss_weight"], 0.03)
         ignored = {"auxiliary_features", "auxiliary_loss_weight"}
-        self.assertEqual(
-            {key: value for key, value in v1.items() if key not in ignored},
-            {key: value for key, value in v2.items() if key not in ignored},
-        )
-        self.assertEqual(v2["checkpoint_every_epochs"], 0.25)
-        self.assertEqual(v2["num_train_epochs"], 3)
+        shared_v1 = {key: value for key, value in v1.items() if key not in ignored}
+        self.assertEqual(shared_v1, {key: value for key, value in v2.items() if key not in ignored})
+        self.assertEqual(shared_v1, {key: value for key, value in v3.items() if key not in ignored})
+        for config in (v2, v3):
+            self.assertEqual(config["checkpoint_every_epochs"], 0.25)
+            self.assertEqual(config["num_train_epochs"], 3)
 
     def test_join_uses_only_id_features_and_quality_not_absolute_difficulty(self):
         pair = {

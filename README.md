@@ -205,6 +205,13 @@ Formal 7509-pair pilot training uses the matched
 `configs/v3_bt_production_v2_aux10.json` configs. Run them as independent
 single-GPU jobs; do not launch both versions through one DDP job.
 
+After the completed V1/V2 validation comparison, V2's auxiliary coefficient
+`0.1` showed mild negative transfer on the Bradley--Terry objective. The
+follow-up single-variable ablation is
+`configs/v3_bt_production_v3_aux10_w003.json`: it keeps every V2 setting fixed
+and lowers only `auxiliary_loss_weight` from `0.1` to `0.03`. Preserve the
+completed V2 run and write this ablation to a new output directory.
+
 Use `scripts/evaluate_pairwise_checkpoint_series.py` to evaluate the untrained
 seed-matched baseline followed by every complete quarter-epoch checkpoint. The
 runner waits for independent validation labels and future checkpoints, resumes

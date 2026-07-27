@@ -1170,3 +1170,47 @@ selection:
 当作baseline。V1和V2分别在GPU 4、5上串行评各自的checkpoint；单个GPU内禁止同时加载
 多个checkpoint。监督器只在`adapter/`、`pairwise_head.pt`、`pairwise_config.json`和
 `trainer_state.json`全部存在后才开始评测，避免读到训练进程正在写入的半成品。
+
+## 13. 辅助损失低权重对照实验
+
+```yaml
+date: 2026-07-27
+status: CODE_READY_SERVER_RUN_PENDING
+evidence:
+  validation_pairs: 1891
+  primary_metric: soft_pairwise_log_loss
+  v1_bt_only:
+    selected_checkpoint: checkpoint-epoch-3-step-1176
+    value: 0.4958014215
+  v2_auxiliary_weight_0.1:
+    selected_checkpoint: checkpoint-epoch-2-step-706
+    value: 0.4987500448
+interpretation:
+  auxiliary_features_learned: true
+  main_task_negative_transfer: mild
+follow_up:
+  name: v3_bt_aux10_w003
+  config: configs/v3_bt_production_v3_aux10_w003.json
+  output_dir: outputs/pairwise_v3_production_8000/v3_bt_aux10_w003
+  auxiliary_loss_weight: 0.03
+  auxiliary_warmup_ratio: 0.1
+controlled_variables:
+  - train_pairs
+  - seed
+  - backbone
+  - LoRA
+  - optimizer
+  - learning_rates
+  - score_regularization
+  - epoch_count
+  - checkpoint_interval
+selection:
+  primary: validation_soft_pairwise_log_loss
+  compare_against:
+    - v1_bt_only
+    - v2_bt_aux10_weight_0.1
+```
+
+本轮只把辅助损失最大权重从`0.1`降至`0.03`，不覆盖已经完成的V2结果。若V3主任务
+达到或优于V1，同时辅助头仍保持有效，说明低权重辅助监督可以保留；否则正式难度排序
+模型继续采用V1，辅助特征改为独立模型或仅作为离线解释模块。
