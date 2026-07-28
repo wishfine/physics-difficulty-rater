@@ -217,3 +217,10 @@ seed-matched baseline followed by every complete quarter-epoch checkpoint. The
 runner waits for independent validation labels and future checkpoints, resumes
 by skipping existing metric files, and automatically attaches frozen ten
 features for V2 when `--features-file` is provided.
+
+After checkpoint selection, `score_pairwise_questions.py` exports the learned
+single-question scalar. `scripts/fit_pairwise_difficulty_calibration.py` fits a
+checkpoint-bound empirical CDF and frozen 20/40/70/90% thresholds, and
+`predict_pairwise_difficulty.py` applies that same calibration to future
+batches without re-binning. The end-to-end commands and isolation requirements
+are documented in `docs/pairwise_score_calibration.md`.

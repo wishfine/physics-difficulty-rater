@@ -66,3 +66,14 @@ slightly worse than V1. Run one controlled follow-up with auxiliary weight
 0.03. Keep the dataset, seed, LoRA, optimizer, schedule, three epochs, and
 quarter-epoch checkpoints unchanged. The new run must use a separate output
 directory and be selected by the same validation soft pairwise log loss.
+
+Pairwise score calibration implementation (2026-07-28)
+=======================================================
+
+The scalar student can now score one prepared question at a time. Calibration
+uses an exact empirical CDF and fixed 20/40/70/90% raw-score thresholds bound
+to the selected checkpoint fingerprint. Validation and test splits are refused
+by default. The first experimental reference uses raw-V3 train questions after
+excluding the 2,000 pair-training nodes; it must be replaced by a
+representative production sample before interpreting percentiles as the
+natural business distribution.

@@ -1214,3 +1214,46 @@ selection:
 本轮只把辅助损失最大权重从`0.1`降至`0.03`，不覆盖已经完成的V2结果。若V3主任务
 达到或优于V1，同时辅助头仍保持有效，说明低权重辅助监督可以保留；否则正式难度排序
 模型继续采用V1，辅助特征改为独立模型或仅作为离线解释模块。
+
+## 14. 连续难度分数与五档校准链路
+
+```yaml
+date: 2026-07-28
+status: CODE_READY_SERVER_RUN_PENDING
+model_output:
+  raw_score: single_question_scalar_s_q
+  pair_probability: sigmoid(s_a_minus_s_b)
+reference:
+  source: pairwise_v3/questions/train.jsonl
+  exclude: pairwise_v3/pilot/questions.jsonl
+  expected_records: 17988
+  validation_used: false
+  test_used: false
+calibration:
+  method: exact_empirical_cdf
+  target_distribution:
+    送分题: 0.20
+    基础题: 0.20
+    中等题: 0.30
+    拔高题: 0.20
+    压轴题: 0.10
+  frozen_quantiles:
+    - 0.20
+    - 0.40
+    - 0.70
+    - 0.90
+  recompute_per_inference_batch: false
+artifacts:
+  scoring: score_pairwise_questions.py
+  calibration: scripts/fit_pairwise_difficulty_calibration.py
+  prediction: predict_pairwise_difficulty.py
+  runbook: docs/pairwise_score_calibration.md
+integrity:
+  bind_checkpoint_fingerprint: true
+  bind_reference_hash: true
+  calibration_content_hash: true
+```
+
+当前25k源文件曾按无效历史`difficulty`字段等量抽样，因此首版参考池只用于验证工程
+链路和产生固定的实验相对标尺。业务部署前需要换成不依赖该字段、能代表线上题库自然
+分布的固定参考样本，再发布新的`calibration_version`。
