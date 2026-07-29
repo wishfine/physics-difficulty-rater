@@ -168,6 +168,33 @@ The append-only [experiment log](docs/experiment_log.md) records data versions,
 run parameters, failures, key teacher/student metrics, artifact locations, and
 the exact information to copy from the server for future updates.
 
+### vLLM parity experiment for trained pairwise checkpoints
+
+The trained checkpoint is not a standard Hugging Face sequence-classification
+model. It contains a PEFT LoRA adapter plus an external LayerNorm, scalar
+difficulty head, and (for V2/V3) ten auxiliary classification heads. The vLLM
+experiment therefore requests unnormalized `LAST` pooling from the LoRA-enabled
+language backbone and applies `pairwise_head.pt` outside vLLM.
+
+Run the registered 32-question parity smoke before adopting this serving path:
+
+```bash
+nohup bash scripts/server_run_vllm_pairwise_parity.sh \
+  /path/to/Qwen3.5-4B \
+  /path/to/checkpoint-epoch-3 \
+  /path/to/questions/validation.jsonl \
+  /path/to/vllm_parity_output \
+  7 \
+  32 \
+  > /path/to/vllm_parity_output/run.log 2>&1 &
+```
+
+`report.json` separately checks that the external head reproduces the HF head,
+that vLLM actually changes every representation when LoRA is enabled, and that
+HF/vLLM scores and global ranking agree. `predictions.jsonl` retains per-question
+score differences and auxiliary predictions for diagnosis. A load-only success
+is not sufficient to approve deployment.
+
 ### V3 student V1/V2 smoke comparison
 
 The student smoke test runs two matched single-GPU experiments. V1 learns only
