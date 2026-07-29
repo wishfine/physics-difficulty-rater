@@ -195,6 +195,33 @@ HF/vLLM scores and global ranking agree. `predictions.jsonl` retains per-questio
 score differences and auxiliary predictions for diagnosis. A load-only success
 is not sufficient to approve deployment.
 
+### Qwen3.5-4B versus Qwen3-4B backbone ablation
+
+The registered backbone comparison keeps the finalized 7,509 pair graph,
+validation graph, tokenizer length, LoRA hyperparameters, optimizer settings,
+seed, and checkpoint schedule fixed. Qwen3-4B has two independent single-GPU
+runs: `qwen3_4b_bt_only.json` trains only the Bradley--Terry scalar objective;
+`qwen3_4b_bt_aux10_w003.json` adds the same ten frozen auxiliary targets with
+aggregate weight `0.03`. The two runs must not be launched as one DDP job.
+
+```bash
+bash scripts/server_run_qwen3_4b_ablation.sh \
+  /home/share_ssd_data/nfs-env/yexinyong/model/qwen/Qwen3-4B \
+  /path/to/train_pairs.jsonl \
+  /path/to/train_pairs_aux10.jsonl \
+  /path/to/qwen3_4b_output_root \
+  6 \
+  7
+```
+
+The launcher writes independent nohup logs and refuses GPUs with nonzero
+volatile uncorrectable ECC errors. After training, evaluate every checkpoint
+against the same independently labeled 1,891-pair validation set. Run the vLLM
+parity experiment on the selected Qwen3 checkpoint with the same question
+sample used for Qwen3.5. Accuracy, pairwise calibration, model-load time, warmed
+throughput, and HF/vLLM parity must all be reported; model-load success alone
+is not a serving comparison.
+
 ### V3 student V1/V2 smoke comparison
 
 The student smoke test runs two matched single-GPU experiments. V1 learns only

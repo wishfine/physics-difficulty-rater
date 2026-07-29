@@ -70,6 +70,28 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             self.assertEqual(config["checkpoint_every_epochs"], 0.25)
             self.assertEqual(config["num_train_epochs"], 3)
 
+    def test_qwen3_backbone_ablation_configs_change_only_auxiliary_objective(self):
+        bt_only = json.loads(
+            (ROOT / "configs" / "qwen3_4b_bt_only.json").read_text(encoding="utf-8")
+        )
+        bt_aux = json.loads(
+            (ROOT / "configs" / "qwen3_4b_bt_aux10_w003.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertFalse(bt_only["auxiliary_features"])
+        self.assertEqual(bt_only["auxiliary_loss_weight"], 0.0)
+        self.assertTrue(bt_aux["auxiliary_features"])
+        self.assertEqual(bt_aux["auxiliary_loss_weight"], 0.03)
+        ignored = {"auxiliary_features", "auxiliary_loss_weight"}
+        self.assertEqual(
+            {key: value for key, value in bt_only.items() if key not in ignored},
+            {key: value for key, value in bt_aux.items() if key not in ignored},
+        )
+        self.assertEqual(bt_only["lora_r"], 8)
+        self.assertEqual(bt_only["gradient_accumulation_steps"], 16)
+        self.assertEqual(bt_only["num_train_epochs"], 3)
+
     def test_join_uses_only_id_features_and_quality_not_absolute_difficulty(self):
         pair = {
             "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
