@@ -1215,6 +1215,113 @@ selection:
 达到或优于V1，同时辅助头仍保持有效，说明低权重辅助监督可以保留；否则正式难度排序
 模型继续采用V1，辅助特征改为独立模型或仅作为离线解释模块。
 
+### V3低辅助权重评测结果
+
+```yaml
+date_completed: 2026-07-30
+status: COMPLETED
+validation:
+  dataset: validation_2000_v1
+  candidate_pairs: 2000
+  accepted_pairs: 1891
+  non_tied_pairs: 1888
+  decisive_pairs: 1827
+  questions: 500
+  graph_connected_components: 1
+  raw_difficulty_used: false
+model:
+  backbone: Qwen3.5-4B
+  tuning: LoRA
+version:
+  name: v3_bt_aux10_w003
+  objective: soft_Bradley_Terry_plus_aux10
+  auxiliary_features: true
+  auxiliary_loss_weight: 0.03
+selection:
+  primary_metric: soft_pairwise_log_loss
+  rule: lower_is_better
+evaluated_checkpoints: 13
+```
+
+| Epoch | Step | Checkpoint | Log Loss ↓ | Brier ↓ | Accuracy ↑ | AUC ↑ |
+|---:|---:|---|---:|---:|---:|---:|
+| 0.00 | 0 | `checkpoint-initial` | 0.670189 | 0.113229 | 0.6393 | 0.6781 |
+| 0.25 | 118 | `checkpoint-epoch-1-step-118` | 0.540036 | 0.050991 | 0.8528 | 0.9323 |
+| 0.50 | 236 | `checkpoint-epoch-1-step-236` | 0.509191 | 0.035047 | 0.9004 | 0.9707 |
+| 0.75 | 354 | `checkpoint-epoch-1-step-354` | 0.504361 | 0.032904 | 0.9153 | 0.9758 |
+| 1.00 | 470 | `checkpoint-epoch-1` | 0.501492 | 0.032434 | 0.9137 | 0.9775 |
+| 1.25 | 588 | `checkpoint-epoch-2-step-588` | 0.500834 | 0.030717 | 0.9190 | 0.9794 |
+| 1.50 | 706 | `checkpoint-epoch-2-step-706` | 0.497900 | 0.029400 | 0.9317 | 0.9822 |
+| 1.75 | 824 | `checkpoint-epoch-2-step-824` | 0.498296 | 0.029533 | 0.9311 | 0.9824 |
+| 2.00 | 940 | `checkpoint-epoch-2` | 0.497958 | 0.028845 | 0.9359 | 0.9829 |
+| 2.25 | 1058 | `checkpoint-epoch-3-step-1058` | 0.497860 | 0.028994 | 0.9338 | 0.9828 |
+| 2.50 | 1176 | `checkpoint-epoch-3-step-1176` | 0.497539 | 0.028999 | 0.9338 | 0.9830 |
+| 2.75 | 1294 | `checkpoint-epoch-3-step-1294` | 0.497608 | 0.029095 | 0.9338 | 0.9828 |
+| 3.00 | 1410 | `checkpoint-epoch-3` | **0.497457** | 0.028997 | 0.9322 | **0.9830** |
+
+按预先确定的主指标选择最终checkpoint：
+
+```yaml
+v3_selected:
+  checkpoint: checkpoint-epoch-3
+  epoch: 3.00
+  optimizer_step: 1410
+  soft_pairwise_log_loss: 0.497457
+  brier_score: 0.028997
+  pairwise_accuracy: 0.9322
+  pairwise_auc: 0.9830
+v3_metric_best:
+  lowest_log_loss:
+    checkpoint: checkpoint-epoch-3
+    value: 0.497457
+  lowest_brier:
+    checkpoint: checkpoint-epoch-2
+    value: 0.028845
+  highest_accuracy:
+    checkpoint: checkpoint-epoch-2
+    value: 0.9359
+  highest_auc:
+    checkpoints:
+      - checkpoint-epoch-3-step-1176
+      - checkpoint-epoch-3
+    displayed_value: 0.9830
+```
+
+相较未训练基线，V3的log loss由`0.670189`降至`0.497457`，Brier由`0.113229`
+降至`0.028997`，pairwise accuracy由`0.6393`升至`0.9322`，AUC由`0.6781`
+升至`0.9830`。主任务在step-706后进入平台期，最终checkpoint仍取得最低validation
+log loss；虽然硬准确率在epoch 2达到峰值后轻微回落，但没有观察到主指标上的明显过拟合。
+
+按各版本主指标最佳checkpoint比较：
+
+| 版本 | 辅助权重 | 最佳checkpoint | Log Loss ↓ | Brier ↓ | Accuracy ↑ | AUC ↑ |
+|---|---:|---|---:|---:|---:|---:|
+| V1 BT-only | 0.00 | `checkpoint-epoch-3-step-1176` | **0.495801** | **0.028347** | **0.934852** | **0.984417** |
+| V2 BT+Aux10 | 0.10 | `checkpoint-epoch-2-step-706` | 0.498750 | 0.030163 | 0.932203 | 0.981134 |
+| V3 BT+Aux10 | 0.03 | `checkpoint-epoch-3` | 0.497457 | 0.028997 | 0.9322 | 0.9830 |
+
+```yaml
+v3_comparison:
+  versus_v1_bt_only:
+    soft_pairwise_log_loss_delta: +0.001656
+    result: V1_better
+  versus_v2_auxiliary_weight_0.1:
+    soft_pairwise_log_loss_delta: -0.001293
+    result: V3_better
+conclusion:
+  lower_auxiliary_weight_mitigates_negative_transfer: true
+  v3_exceeds_v2_on_primary_metric: true
+  v3_exceeds_v1_on_primary_metric: false
+  serious_overfitting_observed: false
+  ranking_model_selection: V1_checkpoint_epoch_3_step_1176
+  v3_auxiliary_quality_status: pending_full_auxiliary_metrics
+```
+
+辅助权重从`0.1`降至`0.03`后，V3主任务明显优于V2，说明降低辅助任务权重有效缓解了
+负迁移；但V3的最低log loss仍比V1高`0.001656`，因此纯难度排序模型继续选择V1。
+本次控制台汇总没有提供10个辅助头的完整指标，尚不能判断V3在低权重下保留了多少辅助
+特征能力；需要读取所选checkpoint对应的完整评测JSON后再补充这一结论。
+
 ## 14. 连续难度分数与五档校准链路
 
 ```yaml
