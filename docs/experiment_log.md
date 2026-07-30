@@ -1243,21 +1243,21 @@ selection:
 evaluated_checkpoints: 13
 ```
 
-| Epoch | Step | Checkpoint | Log Loss ↓ | Brier ↓ | Accuracy ↑ | AUC ↑ |
-|---:|---:|---|---:|---:|---:|---:|
-| 0.00 | 0 | `checkpoint-initial` | 0.670189 | 0.113229 | 0.6393 | 0.6781 |
-| 0.25 | 118 | `checkpoint-epoch-1-step-118` | 0.540036 | 0.050991 | 0.8528 | 0.9323 |
-| 0.50 | 236 | `checkpoint-epoch-1-step-236` | 0.509191 | 0.035047 | 0.9004 | 0.9707 |
-| 0.75 | 354 | `checkpoint-epoch-1-step-354` | 0.504361 | 0.032904 | 0.9153 | 0.9758 |
-| 1.00 | 470 | `checkpoint-epoch-1` | 0.501492 | 0.032434 | 0.9137 | 0.9775 |
-| 1.25 | 588 | `checkpoint-epoch-2-step-588` | 0.500834 | 0.030717 | 0.9190 | 0.9794 |
-| 1.50 | 706 | `checkpoint-epoch-2-step-706` | 0.497900 | 0.029400 | 0.9317 | 0.9822 |
-| 1.75 | 824 | `checkpoint-epoch-2-step-824` | 0.498296 | 0.029533 | 0.9311 | 0.9824 |
-| 2.00 | 940 | `checkpoint-epoch-2` | 0.497958 | 0.028845 | 0.9359 | 0.9829 |
-| 2.25 | 1058 | `checkpoint-epoch-3-step-1058` | 0.497860 | 0.028994 | 0.9338 | 0.9828 |
-| 2.50 | 1176 | `checkpoint-epoch-3-step-1176` | 0.497539 | 0.028999 | 0.9338 | 0.9830 |
-| 2.75 | 1294 | `checkpoint-epoch-3-step-1294` | 0.497608 | 0.029095 | 0.9338 | 0.9828 |
-| 3.00 | 1410 | `checkpoint-epoch-3` | **0.497457** | 0.028997 | 0.9322 | **0.9830** |
+| Epoch | Step | Checkpoint | Log Loss ↓ | Brier ↓ | Accuracy ↑ | AUC ↑ | Decisive Acc ↑ |
+|---:|---:|---|---:|---:|---:|---:|---:|
+| 0.00 | 0 | `checkpoint-initial` | 0.670189 | 0.113229 | 0.639301 | 0.678148 | 0.642036 |
+| 0.25 | 118 | `checkpoint-epoch-1-step-118` | 0.540036 | 0.050991 | 0.852754 | 0.932331 | 0.862069 |
+| 0.50 | 236 | `checkpoint-epoch-1-step-236` | 0.509191 | 0.035047 | 0.900424 | 0.970710 | 0.912425 |
+| 0.75 | 354 | `checkpoint-epoch-1-step-354` | 0.504361 | 0.032904 | 0.915254 | 0.975813 | 0.926656 |
+| 1.00 | 470 | `checkpoint-epoch-1` | 0.501492 | 0.032434 | 0.913665 | 0.977462 | 0.926108 |
+| 1.25 | 588 | `checkpoint-epoch-2-step-588` | 0.500834 | 0.030717 | 0.918962 | 0.979413 | 0.930487 |
+| 1.50 | 706 | `checkpoint-epoch-2-step-706` | 0.497900 | 0.029400 | 0.931674 | 0.982246 | 0.943623 |
+| 1.75 | 824 | `checkpoint-epoch-2-step-824` | 0.498296 | 0.029533 | 0.931144 | 0.982424 | 0.940887 |
+| 2.00 | 940 | `checkpoint-epoch-2` | 0.497958 | **0.028845** | **0.935911** | 0.982880 | **0.945265** |
+| 2.25 | 1058 | `checkpoint-epoch-3-step-1058` | 0.497860 | 0.028994 | 0.933792 | 0.982767 | 0.943076 |
+| 2.50 | 1176 | `checkpoint-epoch-3-step-1176` | 0.497539 | 0.028999 | 0.933792 | **0.982995** | 0.943076 |
+| 2.75 | 1294 | `checkpoint-epoch-3-step-1294` | 0.497608 | 0.029095 | 0.933792 | 0.982848 | 0.943623 |
+| 3.00 | 1410 | `checkpoint-epoch-3` | **0.497457** | 0.028997 | 0.932203 | 0.982984 | 0.941981 |
 
 按预先确定的主指标选择最终checkpoint：
 
@@ -1266,30 +1266,32 @@ v3_selected:
   checkpoint: checkpoint-epoch-3
   epoch: 3.00
   optimizer_step: 1410
-  soft_pairwise_log_loss: 0.497457
-  brier_score: 0.028997
-  pairwise_accuracy: 0.9322
-  pairwise_auc: 0.9830
+  soft_pairwise_log_loss: 0.4974573671
+  brier_score: 0.0289967485
+  pairwise_accuracy: 0.9322033898
+  pairwise_auc: 0.9829838485
+  decisive_pairwise_accuracy: 0.9419813903
 v3_metric_best:
   lowest_log_loss:
     checkpoint: checkpoint-epoch-3
-    value: 0.497457
+    value: 0.4974573671
   lowest_brier:
     checkpoint: checkpoint-epoch-2
-    value: 0.028845
+    value: 0.0288445770
   highest_accuracy:
     checkpoint: checkpoint-epoch-2
-    value: 0.9359
+    value: 0.9359110169
   highest_auc:
-    checkpoints:
-      - checkpoint-epoch-3-step-1176
-      - checkpoint-epoch-3
-    displayed_value: 0.9830
+    checkpoint: checkpoint-epoch-3-step-1176
+    value: 0.9829945367
+  highest_decisive_accuracy:
+    checkpoint: checkpoint-epoch-2
+    value: 0.9452654625
 ```
 
-相较未训练基线，V3的log loss由`0.670189`降至`0.497457`，Brier由`0.113229`
-降至`0.028997`，pairwise accuracy由`0.6393`升至`0.9322`，AUC由`0.6781`
-升至`0.9830`。主任务在step-706后进入平台期，最终checkpoint仍取得最低validation
+相较未训练基线，V3的log loss相对下降`25.77%`，Brier相对下降`74.39%`，
+pairwise accuracy提高`29.29`个百分点，AUC提高`0.304836`，decisive accuracy提高
+`29.99`个百分点。主任务在step-706后进入平台期，最终checkpoint仍取得最低validation
 log loss；虽然硬准确率在epoch 2达到峰值后轻微回落，但没有观察到主指标上的明显过拟合。
 
 按各版本主指标最佳checkpoint比较：
@@ -1298,15 +1300,15 @@ log loss；虽然硬准确率在epoch 2达到峰值后轻微回落，但没有�
 |---|---:|---|---:|---:|---:|---:|
 | V1 BT-only | 0.00 | `checkpoint-epoch-3-step-1176` | **0.495801** | **0.028347** | **0.934852** | **0.984417** |
 | V2 BT+Aux10 | 0.10 | `checkpoint-epoch-2-step-706` | 0.498750 | 0.030163 | 0.932203 | 0.981134 |
-| V3 BT+Aux10 | 0.03 | `checkpoint-epoch-3` | 0.497457 | 0.028997 | 0.9322 | 0.9830 |
+| V3 BT+Aux10 | 0.03 | `checkpoint-epoch-3` | 0.497457 | 0.028997 | 0.932203 | 0.982984 |
 
 ```yaml
 v3_comparison:
   versus_v1_bt_only:
-    soft_pairwise_log_loss_delta: +0.001656
+    soft_pairwise_log_loss_delta: +0.0016559456
     result: V1_better
   versus_v2_auxiliary_weight_0.1:
-    soft_pairwise_log_loss_delta: -0.001293
+    soft_pairwise_log_loss_delta: -0.0012926777
     result: V3_better
 conclusion:
   lower_auxiliary_weight_mitigates_negative_transfer: true
@@ -1314,13 +1316,57 @@ conclusion:
   v3_exceeds_v1_on_primary_metric: false
   serious_overfitting_observed: false
   ranking_model_selection: V1_checkpoint_epoch_3_step_1176
-  v3_auxiliary_quality_status: pending_full_auxiliary_metrics
+  v3_auxiliary_features_learned: true
 ```
 
 辅助权重从`0.1`降至`0.03`后，V3主任务明显优于V2，说明降低辅助任务权重有效缓解了
 负迁移；但V3的最低log loss仍比V1高`0.001656`，因此纯难度排序模型继续选择V1。
-本次控制台汇总没有提供10个辅助头的完整指标，尚不能判断V3在低权重下保留了多少辅助
-特征能力；需要读取所选checkpoint对应的完整评测JSON后再补充这一结论。
+
+V3所选checkpoint的10维辅助特征结果如下：
+
+| 辅助特征 | Accuracy | Balanced Accuracy | Macro F1 |
+|---|---:|---:|---:|
+| problem_structure | 0.814120 | 0.634755 | 0.647697 |
+| step_count | 0.847171 | 0.771493 | 0.775584 |
+| calculation_complexity | 0.862771 | 0.692180 | 0.694541 |
+| reasoning_chain | 0.750132 | 0.717037 | 0.714912 |
+| knowledge_count | 0.807245 | 0.765234 | 0.758592 |
+| subquestion_dependency | 0.840032 | 0.786400 | 0.774515 |
+| state_count | 0.806452 | 0.489748 | 0.491588 |
+| constraint_count | 0.824696 | 0.752784 | 0.741297 |
+| variable_relation | 0.771285 | 0.651220 | 0.636620 |
+| information_processing | 0.752512 | 0.364612 | 0.376392 |
+| **10头宏平均** | **0.807641** | **0.662546** | **0.661174** |
+
+辅助头在step-1176达到最高的10头平均Macro F1 `0.661988`，最终checkpoint仅轻微降至
+`0.661174`。`step_count`、`subquestion_dependency`、`knowledge_count`和
+`constraint_count`表现较稳健；`state_count`和`information_processing`的普通Accuracy
+明显高于Balanced Accuracy和Macro F1，仍存在多数类别偏置。总体上，权重`0.03`仍能
+学到有效辅助特征，同时比权重`0.1`更少损害难度排序主任务。
+
+```yaml
+evaluation_data_quality:
+  checkpoint_files: 13
+  expected_checkpoint_files: 13
+  pair_records_per_file: 1891
+  non_tied_pairs_per_file: 1888
+  decisive_pairs_per_file: 1827
+  auxiliary_heads_per_file: 10
+  auxiliary_records_per_head: 3782
+  schema_consistent_across_checkpoints: true
+  missing_checkpoint_results: 0
+auxiliary_metric_grain:
+  current: pair_side
+  records: 2_times_1891
+  unique_validation_questions: 500
+  caveat: repeated_questions_are_weighted_by_graph_degree
+  recommended_follow_up: additionally_report_unique_question_weighted_metrics
+```
+
+主任务指标以pair为统计粒度，口径正确。辅助指标当前以每条pair的A、B两侧为统计粒度，
+所以共有`3782`条记录，而不是对500道独立题目各统计一次；同一道题会按照它在比较图中的
+度数重复出现。这个口径不影响同一validation图上的checkpoint横向比较，但会让高连接度
+题目在辅助指标中权重更大。后续正式报告应再补一份按`question_id`去重后的500题辅助指标。
 
 ## 14. 连续难度分数与五档校准链路
 
