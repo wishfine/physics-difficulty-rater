@@ -18,6 +18,9 @@ status:
   independent_validation: COMPLETED
   checkpoint_selection: COMPLETED
   single_question_scoring_code: READY
+  vllm_backbone_external_head_parity_code: READY
+  vllm_parity_result: NOT_YET_PROVIDED
+  online_vllm_api_service: NOT_YET_IMPLEMENTED
   five_level_calibration_artifact: NOT_YET_GENERATED
 ```
 
@@ -744,6 +747,325 @@ not_completed:
 此外，第一版参考池继承了原始 25k 数据的历史抽样偏差。它可用于工程验证，但正式上线前
 应改用不依赖错误 `difficulty` 字段、能代表自然业务流量的固定参考题库。
 
+### 13.5 为什么不能直接用普通 `vllm serve` 加载整个模型
+
+训练 checkpoint 不是一个标准 Hugging Face `SequenceClassification` 模型，而是由两部分
+组成：
+
+```text
+Qwen3.5-4B base model
+        +
+LoRA adapter
+        +
+项目自定义任务头：
+  LayerNorm
+  scalar difficulty head
+  optional ten auxiliary heads
+```
+
+vLLM 可以加载 Qwen backbone 和 LoRA，但不会自动读取项目保存的
+`pairwise_head.pt`。如果只启动普通生成服务或只取基础模型 embedding，得到的不是训练
+完成后的难度分数。
+
+因此部署必须拆成两级：
+
+```mermaid
+flowchart LR
+    A["题目文本"] --> B["训练 checkpoint 内的 tokenizer"]
+    B --> C["vLLM pooling runner"]
+    C --> D["Qwen3.5-4B backbone"]
+    D --> E["V1/V3 LoRA adapter"]
+    E --> F["LAST token raw hidden state"]
+    F --> G["ExternalPairwiseHead"]
+    G --> H["LayerNorm"]
+    H --> I["scalar score head"]
+    H --> J["V3 optional Aux10 heads"]
+    I --> K["raw difficulty score s(q)"]
+    K --> L["冻结 calibration"]
+    L --> M["百分位、0–100 分、五档"]
+```
+
+这里的“任务头”不是生成式 Prompt，也不是 vLLM 内置分类器，而是训练时保存的 PyTorch
+参数。
+
+### 13.6 部署所需模型文件
+
+部署一个 checkpoint 至少需要：
+
+```text
+/path/to/Qwen3.5-4B/
+  config.json
+  model weights...
+
+/path/to/checkpoint/
+  adapter/
+    adapter_config.json
+    adapter_model.safetensors
+  tokenizer/
+  pairwise_head.pt
+  pairwise_config.json
+
+/path/to/calibration.json       # 五档输出需要；仅输出 raw score 时可暂缺
+```
+
+各文件用途：
+
+| 文件 | 加载方 | 用途 |
+|---|---|---|
+| Qwen3.5-4B 权重 | vLLM | 基础语言模型 backbone |
+| `adapter/` | vLLM `LoRARequest` | 注入难度任务 LoRA |
+| `tokenizer/` | 服务预处理与 vLLM | 保证 tokenization 与训练一致 |
+| `pairwise_head.pt` | `ExternalPairwiseHead` | 加载 LayerNorm、scalar head 和可选 Aux10 heads |
+| `pairwise_config.json` | task-head loader | 判断 checkpoint 是否带辅助头，并恢复结构配置 |
+| `calibration.json` | 后处理层 | 将 raw score 映射到固定参考系下的百分位和五档 |
+
+V1 最终模型的 `pairwise_head.pt` 只包含 LayerNorm 和 scalar head；V3 还包含十个辅助分类
+头。部署时不能拿 V1 的 head 配 V3 的 adapter，也不能拿一个 checkpoint 的 calibration
+配另一个 checkpoint。项目使用 checkpoint fingerprint 对 adapter、task head、配置和
+基础模型配置进行绑定。
+
+### 13.7 vLLM Backbone 的实际加载方式
+
+项目现有 parity 实现使用 vLLM pooling runner，而不是文本生成 runner：
+
+```python
+from vllm import LLM
+from vllm.config import PoolerConfig
+
+pooler_config = PoolerConfig(
+    pooling_type="LAST",
+    use_activation=False,
+)
+
+llm = LLM(
+    model=MODEL_PATH,
+    tokenizer=CHECKPOINT_TOKENIZER,
+    runner="pooling",
+    convert="embed",
+    pooler_config=pooler_config,
+    language_model_only=True,
+    trust_remote_code=True,
+    dtype="bfloat16",
+    max_model_len=1024,
+    enable_lora=True,
+    max_lora_rank=LORA_RANK,
+)
+```
+
+这些参数有明确含义：
+
+- `runner="pooling"`：返回序列表示，不进行自回归生成；
+- `pooling_type="LAST"`：取最后一个有效 token，与训练代码一致；
+- `use_activation=False`：不要让 vLLM 增加额外归一化或激活；
+- `language_model_only=True`：只运行 Qwen 语言模型主体；
+- `enable_lora=True`：允许请求使用训练得到的 LoRA；
+- `max_model_len=1024`：与训练最大长度保持一致。
+
+LoRA 通过请求显式启用：
+
+```python
+from vllm.lora.request import LoRARequest
+
+lora_request = LoRARequest(
+    "physics_difficulty",
+    1,
+    "/path/to/checkpoint/adapter",
+)
+
+outputs = llm.encode(
+    prompts,
+    pooling_task="embed",
+    lora_request=lora_request,
+)
+```
+
+如果漏掉 `lora_request`，vLLM 返回的是基础 Qwen 表示，不是难度模型表示。部署启动时必须
+同时跑一次 base 与 LoRA 表示对照，确认每条表示确实发生变化。
+
+为保证训练与 vLLM 输入完全一致，当前 parity 脚本先用 checkpoint tokenizer 得到
+`prompt_token_ids`，再将 token IDs 交给 `llm.encode`。生产服务也应复用同一逻辑：
+
+```text
+规范化题目字段
+→ checkpoint tokenizer
+→ truncation max_length=1024
+→ prompt_token_ids
+→ vLLM.encode(..., lora_request=...)
+```
+
+不要在推理端新增聊天模板、teacher 比较 Prompt 或 `/think` 指令。学生模型训练时看到的
+输入就是渲染后的题目文本。
+
+### 13.8 外置任务头如何加载和计算
+
+项目使用 `ExternalPairwiseHead.from_checkpoint()` 读取 `pairwise_head.pt`：
+
+```python
+import torch
+from physics_difficulty.models.external_pairwise_head import ExternalPairwiseHead
+
+head = ExternalPairwiseHead.from_checkpoint(
+    CHECKPOINT_DIR,
+    device="cpu",
+    dtype=torch.float32,
+)
+head.eval()
+
+with torch.no_grad():
+    result = head(vllm_last_hidden_state)
+
+raw_scores = result["scores"]
+auxiliary_logits = result.get("auxiliary_logits")
+```
+
+内部计算为：
+
+```text
+vLLM raw LAST hidden state
+→ checkpoint LayerNorm
+→ scalar Linear
+→ raw score s(q)
+```
+
+如果是 V3，则同一个 LayerNorm 输出还会送入十个独立 Linear：
+
+```text
+normalized representation
+├── difficulty scalar head
+├── problem_structure head
+├── step_count head
+├── calculation_complexity head
+├── reasoning_chain head
+├── knowledge_count head
+├── subquestion_dependency head
+├── state_count head
+├── constraint_count head
+├── variable_relation head
+└── information_processing head
+```
+
+推理阶段模型处于 `eval()`，训练时的 Dropout 不生效。
+
+task head 很小，可以放 CPU，vLLM 表示复制到 CPU 后批量计算；这种方案实现简单且避免与
+vLLM 争抢显存。若后续压测表明 CPU 或数据复制成为瓶颈，可以将 head 放到 GPU，但必须
+先确认 vLLM 的显存预算，并重新做数值一致性和吞吐验收。
+
+### 13.9 完整在线请求链路
+
+建议将 vLLM engine 和外置 task head 包装在同一个常驻 Python 服务进程中，避免通过
+JSON/HTTP 传递高维 hidden state：
+
+```text
+请求进入
+  ↓
+字段校验：question_id、题干、选项、解析、小题
+  ↓
+复用训练端 formatter 生成 text
+  ↓
+checkpoint tokenizer 编码，最长 1024 token
+  ↓
+按 token 数动态组成 batch
+  ↓
+vLLM pooling + LoRA 输出 raw LAST hidden state
+  ↓
+ExternalPairwiseHead 输出 s(q) 和可选 Aux10
+  ↓
+calibration.json 输出 percentile、0–100 分、五档
+  ↓
+返回结果并记录 checkpoint/calibration 版本
+```
+
+建议在线单题/批量接口返回：
+
+```json
+{
+  "question_id": "example",
+  "raw_difficulty_score": 1.2847,
+  "difficulty_percentile": 0.823,
+  "difficulty_score": 82.3,
+  "difficulty_level_id": 3,
+  "difficulty_level": "拔高题",
+  "checkpoint_fingerprint": "...",
+  "calibration_version": "physics_reference_v1",
+  "calibration_id": "..."
+}
+```
+
+如果部署 V3，可以增加：
+
+```json
+{
+  "auxiliary_features": {
+    "step_count": "3-5步",
+    "reasoning_chain": "多层因果推理"
+  }
+}
+```
+
+辅助特征仅用于解释，不执行“步骤多则强制升档”之类的外部规则。
+
+如果提供 pair 比较接口，不需要再次运行模型，只需使用两个已得到的 scalar：
+
+```python
+probability_a_harder = sigmoid(score_a - score_b)
+```
+
+### 13.10 vLLM 部署前必须通过 Parity 验收
+
+现有脚本会在同一批题上同时运行 Hugging Face reference 和 vLLM + external head：
+
+```bash
+nohup bash scripts/server_run_vllm_pairwise_parity.sh \
+  /path/to/Qwen3.5-4B \
+  /path/to/checkpoint-epoch-3-step-1176 \
+  /path/to/questions/validation.jsonl \
+  /path/to/vllm_parity_output \
+  7 \
+  32 \
+  > /path/to/vllm_parity_output/run.log 2>&1 &
+```
+
+验收项包括：
+
+```yaml
+external_head_vs_HF_head:
+  maximum_absolute_error: <= 1.0e-5
+vllm_lora:
+  changed_every_representation: true
+HF_vs_vLLM:
+  raw_hidden_cosine_mean: >= 0.999
+  score_mean_absolute_error: <= 0.05
+  score_pearson: >= 0.99
+  pairwise_ranking_agreement: >= 0.98
+```
+
+V3 还会逐个检查十维辅助 logits 的差异和 argmax 一致率。只有 `report.json` 的 status 为
+`PASS`，才能采用该 vLLM 服务路径。仅仅看到 vLLM 成功加载模型、显存有占用或能够返回
+embedding，都不能证明部署正确。
+
+### 13.11 当前 vLLM 部署状态
+
+```yaml
+implemented:
+  - vLLM pooling backbone loading
+  - LoRA request loading
+  - external scalar and auxiliary task-head loading
+  - HF/vLLM parity experiment
+  - parity acceptance gates
+not_yet_confirmed:
+  - selected V1 checkpoint parity report
+not_yet_implemented:
+  - long-running FastAPI/HTTP production wrapper
+  - batching queue and backpressure
+  - monitoring and health endpoints
+  - production calibration artifact
+  - production latency and throughput benchmark
+```
+
+因此当前不能写成“vLLM 在线服务已经部署完成”。准确状态是：**Qwen backbone + LoRA +
+外置任务头的 vLLM 推理方案和一致性测试代码已经实现；还需要在选定 V1 checkpoint 上
+跑 parity，通过后再补常驻 API 服务。**
+
 ## 14. 实验结论
 
 1. **QuRating 主链路已经跑通。**
@@ -780,11 +1102,13 @@ not_completed:
 ### 下一步
 
 1. 对最终 V1 checkpoint 执行单题 reference scoring；
-2. 冻结经验 CDF、四个 raw-score 阈值和 `calibration_id`；
-3. 在独立批次上完成 raw score → 百分位 → 五档的端到端验收；
-4. 补充按唯一 `question_id` 去重的辅助指标；
-5. 在新一轮 10k/40k 数据中改为 BT 分数分层选题，并显式控制十维特征覆盖；
-6. 方案完全冻结后，只对 test/OOT 运行一次最终评测。
+2. 对最终 V1 checkpoint 运行 HF/vLLM parity，并通过全部 acceptance gate；
+3. 冻结经验 CDF、四个 raw-score 阈值和 `calibration_id`；
+4. 实现常驻 vLLM pooling + external task head API 服务；
+5. 在独立批次上完成 raw score → 百分位 → 五档的端到端验收；
+6. 补充按唯一 `question_id` 去重的辅助指标；
+7. 在新一轮 10k/40k 数据中改为 BT 分数分层选题，并显式控制十维特征覆盖；
+8. 方案完全冻结后，只对 test/OOT 运行一次最终评测。
 
 ## 16. 关键复现文件
 
@@ -815,6 +1139,10 @@ single_question_inference:
   - scripts/fit_pairwise_difficulty_calibration.py
   - predict_pairwise_difficulty.py
   - docs/pairwise_score_calibration.md
+vllm_inference:
+  - src/physics_difficulty/models/external_pairwise_head.py
+  - scripts/experiment_vllm_pairwise_parity.py
+  - scripts/server_run_vllm_pairwise_parity.sh
 experiment_index:
   - docs/experiment_log.md
 ```
