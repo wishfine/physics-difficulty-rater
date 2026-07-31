@@ -8,19 +8,31 @@ import torch
 from torch.utils.data import Dataset
 
 from physics_difficulty.data.truncation import render_with_token_budget
-from physics_difficulty.schema import FEATURE_TO_ID
+from physics_difficulty.schema import FEATURE_VALUES
 
 
 class DifficultyDataset(Dataset):
     """Versioned training/evaluation data with shared section-aware truncation."""
     LABEL_KEYS = ("gold_difficulty_id", "teacher_difficulty_id", "difficulty_id")
 
-    def __init__(self, path: str, tokenizer: Any, max_length: int, require_labels: bool = True, require_feature_labels: bool | None = None):
+    def __init__(
+        self,
+        path: str,
+        tokenizer: Any,
+        max_length: int,
+        require_labels: bool = True,
+        require_feature_labels: bool | None = None,
+        feature_values: Dict[str, List[str]] | None = None,
+    ):
         self.items = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
         self.tokenizer, self.max_length = tokenizer, max_length
         if require_feature_labels is None:
             require_feature_labels = require_labels and bool(self.items) and all("teacher_features" in item for item in self.items)
         self.require_labels, self.require_feature_labels = require_labels, require_feature_labels
+        self.feature_to_id = {
+            name: {value: index for index, value in enumerate(values)}
+            for name, values in (feature_values or FEATURE_VALUES).items()
+        }
         self.tokenizer.padding_side = "right"
         # Rendering with the section-aware truncator calls the tokenizer several
         # times for long questions. Inputs are immutable within a run, so cache
@@ -77,7 +89,7 @@ class DifficultyDataset(Dataset):
 
         if self.require_feature_labels:
             feature_labels = {}
-            for name, value_to_id in FEATURE_TO_ID.items():
+            for name, value_to_id in self.feature_to_id.items():
                 values = [item["teacher_features"][name] for item in batch]
                 feature_labels[name] = torch.tensor([value_to_id[value] for value in values], dtype=torch.long)
             result["feature_labels"] = feature_labels

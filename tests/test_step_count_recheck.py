@@ -19,10 +19,12 @@ def load_rechecker():
 
 
 class StepCountRecheckTests(unittest.TestCase):
-    def test_parser_accepts_only_the_four_step_count_values(self):
+    def test_parser_accepts_only_the_five_step_count_values(self):
         rechecker = load_rechecker()
-        self.assertEqual(rechecker.parse_step_count('{"step_count":"9步以上"}'), "9步以上")
+        self.assertEqual(rechecker.parse_step_count('{"step_count":"9-12步"}'), "9-12步")
+        self.assertEqual(rechecker.parse_step_count('{"step_count":"12步以上"}'), "12步以上")
         self.assertEqual(rechecker.parse_step_count('分析完成。\n{"step_count": "3-5步"}'), "3-5步")
+        self.assertIsNone(rechecker.parse_step_count('{"step_count":"9步以上"}'))
         self.assertIsNone(rechecker.parse_step_count('{"step_count":"10步"}'))
         self.assertIsNone(rechecker.parse_step_count('我认为是 6-8 步'))
 
@@ -31,7 +33,7 @@ class StepCountRecheckTests(unittest.TestCase):
             directory = Path(directory)
             source = directory / "input.jsonl"
             source.write_text(json.dumps({
-                "id": "q1", "text": "【题干】示例", "teacher_features": {"step_count": "9步以上"},
+                "id": "q1", "text": "【题干】示例", "teacher_features": {"step_count": "12步以上"},
             }, ensure_ascii=False) + "\n", encoding="utf-8")
             result = __import__("subprocess").run([
                 sys.executable, str(SCRIPT), "--input", str(source),

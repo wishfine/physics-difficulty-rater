@@ -52,7 +52,17 @@ def main() -> None:
     if args.auxiliary_features:
         head_state["auxiliary_heads"] = model.auxiliary_heads.state_dict()
     torch.save(head_state, output / "pairwise_head.pt")
-    (output / "pairwise_config.json").write_text(json.dumps({"auxiliary_features": args.auxiliary_features}, indent=2), encoding="utf-8")
+    (output / "pairwise_config.json").write_text(
+        json.dumps(
+            {
+                "auxiliary_features": args.auxiliary_features,
+                "feature_values": model.feature_values,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     state = {"schema_version": "pairwise_initial_checkpoint_v1", "model_path": str(Path(args.model_path).resolve()), "seed": args.seed, "training_steps": 0}
     (output / "initial_state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps({**state, "checkpoint_dir": str(output.resolve())}, ensure_ascii=False))

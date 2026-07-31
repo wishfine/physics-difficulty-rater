@@ -23,8 +23,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / "src"))
 
 from physics_difficulty.data.pairwise_dataset import PairwiseDifficultyDataset
+from physics_difficulty.models.pairwise_loading import checkpoint_feature_values
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
 from physics_difficulty.pairwise.losses import auxiliary_loss_weight, normalized_auxiliary_loss
+from physics_difficulty.schema import FEATURE_VALUES
 
 
 def parse_args() -> argparse.Namespace:
@@ -94,7 +96,10 @@ def save_checkpoint(model: torch.nn.Module, tokenizer: Any, optimizer: torch.opt
     torch.save(optimizer.state_dict(), checkpoint / "optimizer.pt")
     torch.save(scheduler.state_dict(), checkpoint / "scheduler.pt")
     (checkpoint / "trainer_state.json").write_text(json.dumps(trainer_state, ensure_ascii=False, indent=2), encoding="utf-8")
-    (checkpoint / "pairwise_config.json").write_text(json.dumps(vars(args), ensure_ascii=False, indent=2), encoding="utf-8")
+    checkpoint_config = {**vars(args), "feature_values": raw.feature_values}
+    (checkpoint / "pairwise_config.json").write_text(
+        json.dumps(checkpoint_config, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     return checkpoint
 
 
@@ -167,6 +172,18 @@ def main() -> None:
     model = QwenPairwiseRater(backbone, auxiliary_features=args.auxiliary_features).to(device)
     if resume_dir:
         state = torch.load(resume_dir / "pairwise_head.pt", map_location=device)
+        resume_config_path = resume_dir / "pairwise_config.json"
+        resume_config = (
+            json.loads(resume_config_path.read_text(encoding="utf-8"))
+            if resume_config_path.is_file()
+            else {}
+        )
+        resume_feature_values = checkpoint_feature_values(resume_config, state)
+        if args.auxiliary_features and resume_feature_values != FEATURE_VALUES:
+            raise ValueError(
+                "cannot resume a legacy four-bin step_count checkpoint with the current "
+                "five-bin schema; rebuild five-bin auxiliary data and start a new run"
+            )
         model.norm.load_state_dict(state["norm"])
         model.score_head.load_state_dict(state["score_head"])
         if args.auxiliary_features:

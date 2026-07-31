@@ -43,8 +43,10 @@ def complete_features(row: dict[str, Any]) -> dict[str, str] | None:
 def candidate_reasons(question: dict[str, Any], features: dict[str, str]) -> list[str]:
     diagnostics = question.get("diagnostics") or {}
     reasons: list[str] = []
-    if features["step_count"] == "9步以上":
-        reasons.append("existing_9plus_control")
+    if features["step_count"] == "9-12步":
+        reasons.append("existing_9_12_control")
+    if features["step_count"] == "12步以上":
+        reasons.append("existing_12plus_control")
     if features["step_count"] == "6-8步":
         reasons.append("current_6_8")
     if features["subquestion_dependency"] == "多问且层层递进":
@@ -118,7 +120,7 @@ def main() -> None:
 
     quotas = {str(name): int(value) for name, value in args.stratum_quotas.items()}
     supported_strata = {
-        "existing_9plus_control", "current_6_8", "progressive_subquestions",
+        "existing_9_12_control", "existing_12plus_control", "current_6_8", "progressive_subquestions",
         "high_reasoning_complexity", "long_or_many_subquestions", "random_control",
     }
     unknown = sorted(set(quotas) - supported_strata)
@@ -149,7 +151,7 @@ def main() -> None:
     stratum_pools = {
         reason: [record for record in records if reason in record[2]]
         for reason in (
-            "existing_9plus_control", "current_6_8", "progressive_subquestions",
+            "existing_9_12_control", "existing_12plus_control", "current_6_8", "progressive_subquestions",
             "high_reasoning_complexity", "long_or_many_subquestions",
         )
     }
@@ -158,7 +160,7 @@ def main() -> None:
     stratum_pools["random_control"] = [record for record in records if not record[2]]
     quota_report = {}
     for reason in (
-        "existing_9plus_control", "current_6_8", "progressive_subquestions",
+        "existing_9_12_control", "existing_12plus_control", "current_6_8", "progressive_subquestions",
         "high_reasoning_complexity", "long_or_many_subquestions",
     ):
         quota = quotas.get(reason, 0)

@@ -8,6 +8,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_MERGED_FEATURE_VALUES
 
 
 def _require_checkpoint_files(checkpoint_dir: Path) -> None:
@@ -35,12 +36,18 @@ def load_rater(model_path: str | Path, checkpoint_dir: str | Path) -> tuple[Qwen
     base = AutoModel.from_pretrained(model_path, torch_dtype=dtype, trust_remote_code=True)
     from peft import PeftModel
     backbone = PeftModel.from_pretrained(base, checkpoint / "adapter", is_trainable=False)
-    model = QwenDifficultyRater(backbone).to(device)
     head_state = torch.load(checkpoint / "difficulty_heads.pt", map_location=device)
     required_heads = ("norm", "difficulty_head", "feature_heads")
     missing_heads = [name for name in required_heads if name not in head_state]
     if missing_heads:
         raise ValueError(f"Invalid difficulty_heads.pt in {checkpoint}: missing {missing_heads}")
+    step_weight = head_state["feature_heads"].get("step_count.weight")
+    feature_values = (
+        LEGACY_MERGED_FEATURE_VALUES
+        if step_weight is not None and int(step_weight.shape[0]) == 4
+        else FEATURE_VALUES
+    )
+    model = QwenDifficultyRater(backbone, feature_values=feature_values).to(device)
     model.norm.load_state_dict(head_state["norm"])
     model.difficulty_head.load_state_dict(head_state["difficulty_head"])
     model.feature_heads.load_state_dict(head_state["feature_heads"])

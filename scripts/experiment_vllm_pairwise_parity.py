@@ -22,7 +22,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.text_only import question_identifier
 from physics_difficulty.models.external_pairwise_head import ExternalPairwiseHead
 from physics_difficulty.models.pairwise_loading import load_pairwise_rater
-from physics_difficulty.schema import FEATURE_VALUES
 
 
 def load_questions(path: str | Path, limit: int) -> list[dict[str, Any]]:
@@ -189,8 +188,9 @@ def main() -> None:
     hf_raw_parts: list[torch.Tensor] = []
     hf_representation_parts: list[torch.Tensor] = []
     hf_score_parts: list[torch.Tensor] = []
+    feature_values = model.feature_values
     hf_aux_parts: dict[str, list[torch.Tensor]] = {
-        name: [] for name in FEATURE_VALUES
+        name: [] for name in feature_values
     } if model.auxiliary_features else {}
     hf_inference_start = time.perf_counter()
     with torch.no_grad():
@@ -340,12 +340,12 @@ def main() -> None:
             }
             if hf_aux:
                 record["hf_auxiliary_predictions"] = {
-                    name: FEATURE_VALUES[name][hf_aux_predictions[name][index]]
-                    for name in FEATURE_VALUES
+                    name: feature_values[name][hf_aux_predictions[name][index]]
+                    for name in feature_values
                 }
                 record["vllm_auxiliary_predictions"] = {
-                    name: FEATURE_VALUES[name][vllm_aux_predictions[name][index]]
-                    for name in FEATURE_VALUES
+                    name: feature_values[name][vllm_aux_predictions[name][index]]
+                    for name in feature_values
                 }
             target.write(json.dumps(record, ensure_ascii=False) + "\n")
 

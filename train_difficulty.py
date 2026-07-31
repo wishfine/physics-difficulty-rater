@@ -162,6 +162,12 @@ def main() -> None:
     model = QwenDifficultyRater(backbone).to(device)
     if resume_dir:
         head_state = torch.load(resume_dir / "difficulty_heads.pt", map_location=device)
+        step_weight = head_state["feature_heads"].get("step_count.weight")
+        if step_weight is not None and int(step_weight.shape[0]) != len(model.feature_values["step_count"]):
+            raise ValueError(
+                "cannot resume a legacy four-bin step_count checkpoint with the current "
+                "five-bin schema; rebuild five-bin training data and start a new run"
+            )
         model.norm.load_state_dict(head_state["norm"])
         model.difficulty_head.load_state_dict(head_state["difficulty_head"])
         model.feature_heads.load_state_dict(head_state["feature_heads"])

@@ -1448,3 +1448,28 @@ offline_bt_audit:
     - question_scores.jsonl
     - pair_residuals.jsonl
 ```
+
+## 16. step_count 恢复 frozen18 五档
+
+```yaml
+date: 2026-07-31
+status: CODE_COMPLETE_SERVER_DATA_REBUILD_PENDING
+current_values:
+  - 1-2步
+  - 3-5步
+  - 6-8步
+  - 9-12步
+  - 12步以上
+historical_merged_value: 9步以上
+policy:
+  new_data: 从 teacher_features_legacy18.step_count 重新派生
+  merged_rows: 拒绝自动拆分
+  old_checkpoints: 允许按四档原 schema 只读评估
+  resume_old_checkpoint: 禁止续训为五档
+model_change:
+  step_count_head: Linear(H, 5)
+validation:
+  targeted_unittest: PASS
+  compileall: PASS
+  full_unittest: BLOCKED_BY_LOCAL_MISSING_NUMPY
+```

@@ -16,7 +16,6 @@ sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.pairwise_dataset import PairwiseDifficultyDataset
 from physics_difficulty.models.pairwise_loading import load_pairwise_rater
 from physics_difficulty.pairwise.metrics import soft_pairwise_metrics
-from physics_difficulty.schema import FEATURE_VALUES
 
 
 def classification_metrics(predictions: list[int], targets: list[int], class_count: int) -> dict[str, float | int]:
@@ -63,13 +62,20 @@ def main() -> None:
     model, tokenizer = load_pairwise_rater(args.model_path, checkpoint, device, args.bf16)
 
     auxiliary_features = bool(model.auxiliary_features)
-    dataset = PairwiseDifficultyDataset(args.eval_file, tokenizer, args.max_length, require_auxiliary_features=auxiliary_features)
+    feature_values = model.feature_values
+    dataset = PairwiseDifficultyDataset(
+        args.eval_file,
+        tokenizer,
+        args.max_length,
+        require_auxiliary_features=auxiliary_features,
+        feature_values=feature_values,
+    )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=dataset.collate_fn)
     probabilities: list[float] = []
     targets: list[float] = []
     prediction_rows = []
-    auxiliary_predictions = {name: [] for name in FEATURE_VALUES}
-    auxiliary_targets = {name: [] for name in FEATURE_VALUES}
+    auxiliary_predictions = {name: [] for name in feature_values}
+    auxiliary_targets = {name: [] for name in feature_values}
     with torch.no_grad():
         for batch in loader:
             outputs = model(batch["input_ids"].to(device), batch["attention_mask"].to(device), int(batch["pair_count"]))
@@ -80,7 +86,7 @@ def main() -> None:
             probabilities.extend(batch_probabilities)
             targets.extend(batch_targets)
             if auxiliary_features:
-                for name in FEATURE_VALUES:
+                for name in feature_values:
                     for side in ("a", "b"):
                         side_targets = batch[f"auxiliary_targets_{side}"][name]
                         side_predictions = outputs[f"auxiliary_logits_{side}"][name].argmax(dim=-1).cpu()
@@ -107,7 +113,7 @@ def main() -> None:
     if auxiliary_features:
         metrics["auxiliary"] = {
             name: classification_metrics(auxiliary_predictions[name], auxiliary_targets[name], len(values))
-            for name, values in FEATURE_VALUES.items()
+            for name, values in feature_values.items()
         }
     output = Path(args.output_file)
     output.parent.mkdir(parents=True, exist_ok=True)

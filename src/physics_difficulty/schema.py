@@ -1,4 +1,4 @@
-"""Frozen-18-compatible V2 schema for the physics local model."""
+"""Frozen-18-compatible auxiliary schema for the physics local model."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -14,9 +14,12 @@ FROZEN_18_FEATURE_NAMES = (
     "state_count", "constraint_count", "variable_relation", "experiment_requirement", "graph_table_requirement", "error_risk",
 )
 
+STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9-12步", "12步以上"]
+LEGACY_MERGED_STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9步以上"]
+
 FEATURE_VALUES = {
     "problem_structure": PROBLEM_STRUCTURE_VALUES,
-    "step_count": ["1-2步", "3-5步", "6-8步", "9步以上"],
+    "step_count": STEP_COUNT_VALUES,
     "calculation_complexity": ["口算或直接判断", "简单笔算", "多公式联立", "复杂方程或范围计算"],
     "reasoning_chain": ["直接套用", "简单因果推理", "多层因果推理", "逆向推理或临界分析"],
     "knowledge_count": ["1个", "2-3个", "4个及以上"],
@@ -27,6 +30,10 @@ FEATURE_VALUES = {
     "information_processing": ["无", "图表直接读数", "图表多组比较归纳", "图像反推或外推", "实验基础操作或读数", "实验控制变量或故障分析", "实验方案设计或误差评价", "图表与实验混合处理"],
 }
 FEATURE_TO_ID = {name: {value: index for index, value in enumerate(values)} for name, values in FEATURE_VALUES.items()}
+LEGACY_MERGED_FEATURE_VALUES = {
+    **FEATURE_VALUES,
+    "step_count": LEGACY_MERGED_STEP_COUNT_VALUES,
+}
 
 LEGACY_DEFAULTS = {
     "problem_structure": "概念判断", "step_count": "1-2步", "calculation_complexity": "口算或直接判断",
@@ -62,9 +69,12 @@ def normalize_knowledge_domains(features: Dict[str, Any] | None) -> List[str]:
 
 def normalize_v2_features(legacy: Dict[str, Any] | None) -> Dict[str, Any]:
     legacy = legacy or {}
-    step = str(legacy.get("step_count", LEGACY_DEFAULTS["step_count"]))
-    if step in {"9-12步", "12步以上"}:
-        step = "9步以上"
+    step = str(legacy.get("step_count", LEGACY_DEFAULTS["step_count"])).strip()
+    if step == "9步以上":
+        raise ValueError(
+            "step_count='9步以上' is an irreversible legacy merged label; "
+            "rebuild from teacher_features_legacy18 containing '9-12步' or '12步以上'"
+        )
     result = {
         "problem_structure": normalize_problem_structure(legacy.get("problem_structure")),
         "step_count": _valid("step_count", step, "1-2步"),

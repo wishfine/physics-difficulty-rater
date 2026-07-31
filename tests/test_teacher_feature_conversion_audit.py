@@ -55,7 +55,7 @@ class TeacherFeatureConversionAuditTests(unittest.TestCase):
                         "teacher_features_legacy18": source_row()["difficulty_rating"]["features"],
                         "teacher_features": {
                             "problem_structure": "直接计算",
-                            "step_count": "9步以上",
+                            "step_count": "9-12步",
                             "calculation_complexity": "多公式联立",
                             "reasoning_chain": "多层因果推理",
                             "knowledge_count": "2-3个",

@@ -3,12 +3,19 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from typing import Mapping, Sequence
 
 from physics_difficulty.schema import FEATURE_VALUES
 
 
 class QwenPairwiseRater(nn.Module):
-    def __init__(self, backbone: nn.Module, dropout: float = 0.1, auxiliary_features: bool = False):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        dropout: float = 0.1,
+        auxiliary_features: bool = False,
+        feature_values: Mapping[str, Sequence[str]] | None = None,
+    ):
         super().__init__()
         self.backbone = backbone
         config = getattr(backbone.config, "text_config", backbone.config)
@@ -18,11 +25,14 @@ class QwenPairwiseRater(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.score_head = nn.Linear(hidden_size, 1)
         self.auxiliary_features = auxiliary_features
+        self.feature_values = {
+            name: list(values) for name, values in (feature_values or FEATURE_VALUES).items()
+        }
         # Do not let optional-head initialization advance the global RNG. This
         # keeps V1/V2 dropout streams matched under the same seed.
         with torch.random.fork_rng(devices=[]):
             self.auxiliary_heads = nn.ModuleDict({
-                name: nn.Linear(hidden_size, len(values)) for name, values in FEATURE_VALUES.items()
+                name: nn.Linear(hidden_size, len(values)) for name, values in self.feature_values.items()
             }) if auxiliary_features else nn.ModuleDict()
         self.norm.to(dtype=backbone_dtype)
         self.score_head.to(dtype=backbone_dtype)

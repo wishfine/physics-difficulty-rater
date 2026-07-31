@@ -9,20 +9,34 @@ import torch
 from torch.utils.data import Dataset
 
 from physics_difficulty.data.text_only import forbidden_source_label_paths, leakage_findings
-from physics_difficulty.schema import FEATURE_TO_ID
+from physics_difficulty.schema import FEATURE_VALUES
 
 
 class PairwiseDifficultyDataset(Dataset):
-    def __init__(self, path: str, tokenizer: Any, max_length: int, require_auxiliary_features: bool = False):
+    def __init__(
+        self,
+        path: str,
+        tokenizer: Any,
+        max_length: int,
+        require_auxiliary_features: bool = False,
+        feature_values: Dict[str, List[str]] | None = None,
+    ):
         self.items = [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
         if not self.items:
             raise ValueError("pairwise dataset is empty")
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.require_auxiliary_features = require_auxiliary_features
+        self.feature_values = {
+            name: list(values) for name, values in (feature_values or FEATURE_VALUES).items()
+        }
+        self.feature_to_id = {
+            name: {value: index for index, value in enumerate(values)}
+            for name, values in self.feature_values.items()
+        }
         self.tokenizer.padding_side = "right"
         self.question_degrees: Dict[str, int] = {}
-        feature_counts = {name: [0] * len(value_to_id) for name, value_to_id in FEATURE_TO_ID.items()}
+        feature_counts = {name: [0] * len(value_to_id) for name, value_to_id in self.feature_to_id.items()}
         for item in self.items:
             forbidden = forbidden_source_label_paths(item)
             if forbidden:
@@ -54,9 +68,9 @@ class PairwiseDifficultyDataset(Dataset):
                         continue
                     if not 0 < quality <= 1:
                         raise ValueError("auxiliary feature quality must be in (0, 1]")
-                    if set(side_features) != set(FEATURE_TO_ID):
+                    if set(side_features) != set(self.feature_to_id):
                         raise ValueError("auxiliary feature names do not match the frozen ten-dimensional schema")
-                    for name, value_to_id in FEATURE_TO_ID.items():
+                    for name, value_to_id in self.feature_to_id.items():
                         value = side_features[name]
                         if value not in value_to_id:
                             raise ValueError(f"invalid auxiliary feature {name}={value!r}")
@@ -94,8 +108,8 @@ class PairwiseDifficultyDataset(Dataset):
             "metadata": [item.get("metadata") or {} for item in batch],
         }
         if self.require_auxiliary_features:
-            targets_a = {name: [] for name in FEATURE_TO_ID}
-            targets_b = {name: [] for name in FEATURE_TO_ID}
+            targets_a = {name: [] for name in self.feature_to_id}
+            targets_b = {name: [] for name in self.feature_to_id}
             weights_a: List[float] = []
             weights_b: List[float] = []
             for item in batch:
@@ -107,7 +121,7 @@ class PairwiseDifficultyDataset(Dataset):
                     quality = float(item["auxiliary_feature_quality"].get(side, 0.0))
                     degree = self.question_degrees[str(item[id_field])]
                     weights.append(quality / degree if side_features is not None else 0.0)
-                    for name, value_to_id in FEATURE_TO_ID.items():
+                    for name, value_to_id in self.feature_to_id.items():
                         targets[name].append(value_to_id[side_features[name]] if side_features is not None else -100)
             result.update({
                 "auxiliary_targets_a": {name: torch.tensor(values, dtype=torch.long) for name, values in targets_a.items()},

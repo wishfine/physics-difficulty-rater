@@ -472,14 +472,13 @@ teacher 仍需选择最能代表核心解题任务的一类。物理知识领域
 | 1-2步 | 一次判断或一两个直接关系即可完成 |
 | 3-5步 | 需要短推理链或若干相互衔接的计算 |
 | 6-8步 | 存在较长且连续的建模、推理或计算过程 |
-| 9步以上 | 需要很长的连续推理链、多个阶段或多问递进 |
+| 9-12步 | 需要较长的连续推理链、多个相互衔接的阶段 |
+| 12步以上 | 需要极长推理链、复杂多问递进或多阶段综合建模 |
 
-旧 frozen18 中的“9-12步”和“12步以上”已合并为“9步以上”，避免最高两档样本过少。
-这项合并在生成 curated 数据时已经完成：`prepare_teacher_data.py` 将原始
-`teacher_features_legacy18.step_count` 规范化后写入 `teacher_features.step_count`；
-`attach_pairwise_auxiliary_features.py` 构造 8000-pair 的 Aux10 训练文件时只读取
-`teacher_features`，不会读取 legacy18。旧字段仍保留原始值仅用于数据追溯，模型实际训练
-只接受“1-2步 / 3-5步 / 6-8步 / 9步以上”四类。
+> 口径修订：历史 V3 8000-pair 实验曾将“9-12步”和“12步以上”合并为“9步以上”，
+> 因而本报告后文的既有 V3 指标仍对应四档旧 checkpoint。当前数据与代码已经恢复 frozen18
+> 的五档原始口径；新数据必须从 `teacher_features_legacy18.step_count` 重新生成，不能根据
+> 已合并的“9步以上”反推两个高档位，也不能从旧四档 checkpoint 直接续训。
 
 #### 3. `calculation_complexity`：计算链复杂度
 
@@ -587,7 +586,7 @@ teacher 仍需选择最能代表核心解题任务的一类。物理知识领域
 ```text
 shared question representation h
 ├── problem_structure: Linear(H, 9)
-├── step_count: Linear(H, 4)
+├── step_count: Linear(H, 5)
 ├── calculation_complexity: Linear(H, 4)
 ├── reasoning_chain: Linear(H, 4)
 ├── knowledge_count: Linear(H, 3)
@@ -604,7 +603,7 @@ shared question representation h
 2. 在推理时提供可解释标签；
 3. 做数据覆盖、类别偏置和错误切片分析。
 
-它们不用于外部硬规则修正最终难度。模型预测“9步以上”不等于代码自动将题目升档；
+它们不用于外部硬规则修正最终难度。模型预测“9-12步”或“12步以上”不等于代码自动将题目升档；
 最终难度仍由 Bradley–Terry 标量头决定。
 
 ## 8. 学生模型结构

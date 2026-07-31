@@ -3,26 +3,35 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping, Sequence
 
 import torch
 import torch.nn as nn
 
+from physics_difficulty.models.pairwise_loading import checkpoint_feature_values
 from physics_difficulty.schema import FEATURE_VALUES
 
 
 class ExternalPairwiseHead(nn.Module):
     """Apply the trained LayerNorm, scalar head, and optional auxiliary heads."""
 
-    def __init__(self, hidden_size: int, auxiliary_features: bool):
+    def __init__(
+        self,
+        hidden_size: int,
+        auxiliary_features: bool,
+        feature_values: Mapping[str, Sequence[str]] | None = None,
+    ):
         super().__init__()
         self.norm = nn.LayerNorm(hidden_size)
         self.score_head = nn.Linear(hidden_size, 1)
         self.auxiliary_features = auxiliary_features
+        self.feature_values = {
+            name: list(values) for name, values in (feature_values or FEATURE_VALUES).items()
+        }
         self.auxiliary_heads = nn.ModuleDict(
             {
                 name: nn.Linear(hidden_size, len(values))
-                for name, values in FEATURE_VALUES.items()
+                for name, values in self.feature_values.items()
             }
             if auxiliary_features
             else {}
@@ -53,7 +62,8 @@ class ExternalPairwiseHead(nn.Module):
         auxiliary_features = bool(config.get("auxiliary_features", False))
         if auxiliary_features and "auxiliary_heads" not in state:
             raise ValueError("auxiliary checkpoint is missing auxiliary_heads")
-        head = cls(hidden_size, auxiliary_features)
+        feature_values = checkpoint_feature_values(config, state)
+        head = cls(hidden_size, auxiliary_features, feature_values)
         head.norm.load_state_dict(state["norm"])
         head.score_head.load_state_dict(state["score_head"])
         if auxiliary_features:

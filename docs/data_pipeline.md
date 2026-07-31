@@ -150,7 +150,7 @@ teacher_features_legacy18:
 ```yaml
 teacher_features:
   problem_structure: "9 分类：概念判断、直接计算、实验探究、图像表格分析、电路综合、力学综合、热学综合、光学声学综合、跨模块综合"
-  step_count: 4 分类
+  step_count: "5 分类：1-2步、3-5步、6-8步、9-12步、12步以上"
   calculation_complexity: 4 分类
   reasoning_chain: 4 分类
   knowledge_count: 3 分类
@@ -161,7 +161,10 @@ teacher_features:
   information_processing: "由 graph_table_requirement 与 experiment_requirement 合并"
 ```
 
-`knowledge_domains` 仅作为元数据，不参与损失。完整 18 维保存于 `teacher_features_legacy18`，派生 10 维保存于 `teacher_features`，版本标记为 `v2_frozen18`。
+`knowledge_domains` 仅作为元数据，不参与损失。完整 18 维保存于
+`teacher_features_legacy18`，派生 10 维保存于 `teacher_features`。当前五档辅助特征
+版本标记为 `aux10_step_count5_v3`。历史四档 `9步以上` 数据只能用于复现旧实验，
+不能与五档数据混合，也不能用于五档 checkpoint 续训。
 
 ## 5. 教师打标、校验与清洗
 

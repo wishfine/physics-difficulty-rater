@@ -16,7 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.dataset import DifficultyDataset
 from physics_difficulty.evaluation.metrics import calibration_metrics, classification_metrics
 from physics_difficulty.models.loading import load_rater
-from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES
+from physics_difficulty.schema import DIFFICULTY_LEVELS
 
 
 def main() -> None:
@@ -38,11 +38,14 @@ def main() -> None:
     # Gold adjudication files carry difficulty labels only. Teacher validation
     # files also carry the ten frozen auxiliary labels; Dataset detects this
     # automatically and preserves their feature metrics.
-    dataset = DifficultyDataset(args.eval_file, tokenizer, args.max_length)
+    feature_values = model.feature_values
+    dataset = DifficultyDataset(
+        args.eval_file, tokenizer, args.max_length, feature_values=feature_values
+    )
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, collate_fn=dataset.collate_fn)
     predictions, labels, probabilities, metadata = [], [], [], []
-    feature_predictions = {name: [] for name in FEATURE_VALUES}
-    feature_labels = {name: [] for name in FEATURE_VALUES}
+    feature_predictions = {name: [] for name in feature_values}
+    feature_labels = {name: [] for name in feature_values}
     has_feature_labels = False
     with torch.no_grad():
         for batch in loader:
@@ -58,7 +61,7 @@ def main() -> None:
                     feature_predictions[name].extend(logits.float().argmax(dim=-1).cpu().tolist())
                     feature_labels[name].extend(batch["feature_labels"][name].tolist())
 
-    feature_metrics = ({name: classification_metrics(feature_predictions[name], feature_labels[name], len(values)) for name, values in FEATURE_VALUES.items()} if has_feature_labels else {})
+    feature_metrics = ({name: classification_metrics(feature_predictions[name], feature_labels[name], len(values)) for name, values in feature_values.items()} if has_feature_labels else {})
 
     slices = {}
     for field in ("has_analysis", "has_subquestions", "input_length_bucket", "has_image_url", "image_dependency_risk", "raw_api_disagreement", "gold_confidence"):

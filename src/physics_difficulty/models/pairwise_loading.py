@@ -9,6 +9,22 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_MERGED_FEATURE_VALUES
+
+
+def checkpoint_feature_values(
+    checkpoint_config: dict[str, Any], state: dict[str, Any]
+) -> dict[str, list[str]]:
+    configured = checkpoint_config.get("feature_values")
+    if configured is not None:
+        if not isinstance(configured, dict):
+            raise ValueError("checkpoint feature_values must be an object")
+        return {str(name): [str(value) for value in values] for name, values in configured.items()}
+    auxiliary_state = state.get("auxiliary_heads") or {}
+    step_weight = auxiliary_state.get("step_count.weight")
+    if step_weight is not None and int(step_weight.shape[0]) == 4:
+        return {name: list(values) for name, values in LEGACY_MERGED_FEATURE_VALUES.items()}
+    return {name: list(values) for name, values in FEATURE_VALUES.items()}
 
 
 def load_pairwise_rater(model_path: str, checkpoint_dir: str | Path, device: torch.device, bf16: bool = True) -> tuple[QwenPairwiseRater, Any]:
@@ -33,8 +49,11 @@ def load_pairwise_rater(model_path: str, checkpoint_dir: str | Path, device: tor
     config_path = checkpoint / "pairwise_config.json"
     checkpoint_config = json.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
     auxiliary_features = bool(checkpoint_config.get("auxiliary_features", False))
-    model = QwenPairwiseRater(backbone, auxiliary_features=auxiliary_features).to(device)
     state = torch.load(checkpoint / "pairwise_head.pt", map_location=device)
+    feature_values = checkpoint_feature_values(checkpoint_config, state)
+    model = QwenPairwiseRater(
+        backbone, auxiliary_features=auxiliary_features, feature_values=feature_values
+    ).to(device)
     model.norm.load_state_dict(state["norm"])
     model.score_head.load_state_dict(state["score_head"])
     if auxiliary_features:

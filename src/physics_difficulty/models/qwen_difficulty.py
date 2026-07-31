@@ -1,11 +1,17 @@
 from __future__ import annotations
 import torch
 import torch.nn as nn
+from typing import Mapping, Sequence
 from physics_difficulty.schema import FEATURE_VALUES
 
 class QwenDifficultyRater(nn.Module):
     """Qwen encoder with one ordinal difficulty head and ten V2 feature heads."""
-    def __init__(self, backbone: nn.Module, dropout: float = 0.1):
+    def __init__(
+        self,
+        backbone: nn.Module,
+        dropout: float = 0.1,
+        feature_values: Mapping[str, Sequence[str]] | None = None,
+    ):
         super().__init__()
         self.backbone = backbone
         config = getattr(backbone.config, "text_config", backbone.config)
@@ -14,7 +20,13 @@ class QwenDifficultyRater(nn.Module):
         self.norm = nn.LayerNorm(hidden_size)
         self.dropout = nn.Dropout(dropout)
         self.difficulty_head = nn.Linear(hidden_size, 5)
-        self.feature_heads = nn.ModuleDict({name: nn.Linear(hidden_size, len(values)) for name, values in FEATURE_VALUES.items()})
+        self.feature_values = {
+            name: list(values) for name, values in (feature_values or FEATURE_VALUES).items()
+        }
+        self.feature_heads = nn.ModuleDict({
+            name: nn.Linear(hidden_size, len(values))
+            for name, values in self.feature_values.items()
+        })
         # Qwen is normally loaded in bf16.  Heads must use the same dtype,
         # otherwise the first linear layer receives bf16 activations and fp32 weights.
         self.norm.to(dtype=backbone_dtype)
