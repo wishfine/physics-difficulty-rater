@@ -4,6 +4,8 @@
   "distribution_fraction": 0.8,
   "rare_fraction": 0.1,
   "random_fraction": 0.1,
+  "minimum_category_count_global": 20,
+  "minimum_category_count_per_decile": 2,
   "maximum_feature_jsd": 0.05,
   "seed": 42
 }

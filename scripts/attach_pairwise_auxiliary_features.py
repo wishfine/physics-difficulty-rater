@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Attach frozen ten-dimensional teacher features to pairwise records by question ID."""
+"""Attach versioned auxiliary teacher features to pairwise records by question ID."""
 from __future__ import annotations
 
 import argparse
@@ -131,7 +131,7 @@ def main() -> None:
             target.write(json.dumps(result, ensure_ascii=False) + "\n")
 
     report = {
-        "schema_version": "pairwise_auxiliary_frozen10_v1",
+        "schema_version": "pairwise_auxiliary_aux11_v2",
         "pairs": str(pairs_path.resolve()),
         "features": str(features_path.resolve()),
         "output": str(output_path.resolve()),

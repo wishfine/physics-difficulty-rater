@@ -4,7 +4,7 @@
 document_type: incremental_experiment_plan
 baseline:
   experiment: QuRating_V3_8000_pair
-  report: docs/v3_8000pair_end_to_end_report.md
+  report: docs/quRating_v3_8000pair_weekly_progress_2026w31.md
 new_experiment:
   source_records_before_normalized_dedup: 58977
   curated_distinct_records: 58962
@@ -17,18 +17,18 @@ status:
   40000_pair_teacher_launcher: READY
   postlabel_offline_bt_audit: READY
   full_pool_bt_scores: MISSING
-  prelabel_score_based_pair_audit: TO_IMPLEMENT
+  prelabel_score_based_pair_audit: READY
   expanded_validation_graph: TO_IMPLEMENT
   training: NOT_STARTED
 ```
 
 本文只说明相较
-[V3 8000-Pair 全流程实验](v3_8000pair_end_to_end_report.md)
+[V3 8000-Pair 阶段性进度报告（2026-W31）](quRating_v3_8000pair_weekly_progress_2026w31.md)
 新增或改变的部分。以下旧流程不再重复：
 
 - Qwen3-32B 正反序 nonthinking + thinking_1024 级联标注；
 - Jeffreys 平滑、soft target、位置偏差和 sample weight；
-- Qwen3.5-4B LoRA、Soft Bradley–Terry 主损失和 Aux10 任务头结构；
+- Qwen3.5-4B LoRA、Soft Bradley–Terry 主损失和历史 Aux10 任务头结构；
 - checkpoint 保存与断点恢复；
 - vLLM pooling backbone + LoRA + 外置 task head 部署；
 - raw scalar、经验 CDF 和五档校准的基本定义。
@@ -39,7 +39,7 @@ V3 使用 2,000 道题和 7,509 条最终训练 pair，已经证明整条 QuRati
 三个明显限制：
 
 1. 训练题目只覆盖原始题池的一小部分；
-2. 2,000 题采用无标签哈希抽样，没有显式控制连续难度区间和十维特征覆盖；
+2. 2,000 题采用无标签哈希抽样，没有显式控制连续难度区间和辅助特征覆盖；
 3. 比较图虽然连通，但局部细粒度边、跨难度桥接边和稀有特征题的数量仍有限。
 
 本轮不改变模型基本原理，而是扩大题目和比较边，并把“数据是否选得合理”纳入正式质量
@@ -69,7 +69,7 @@ flowchart TD
     A["刷新后的 58,962 道规范化题目"] --> B["旧 V1 BT-only 模型逐题打分"]
     B --> C["训练池按 BT score 分成 10 个等频区间"]
     C --> D["每区间选择 1,000 题"]
-    D --> E["十维边际分布匹配 + 稀有类别保护 + 随机探索"]
+    D --> E["11 维类别下限 + 边际分布匹配 + 稀有保护 + 随机探索"]
     E --> F["得到 10,000 道训练节点"]
     F --> G["构造 40,000 条 feature-aware 候选边"]
     G --> H["第一次数据验证：打标前审计"]
@@ -80,7 +80,7 @@ flowchart TD
     K --> L["第二次数据验证：打标后离线 BT 审计"]
     L --> M{"Post-label Gate"}
     M -- "不通过" --> N["残差复判 / 补边 / 重新打标"]
-    M -- "通过" --> O["训练 BT-only 与 Aux10-w0.03"]
+    M -- "通过" --> O["训练 BT-only 与 Aux11-w0.03"]
     O --> P["旧 Validation 回归验证"]
     O --> Q["新 V4 Validation 主验证"]
     P --> R["2×2 新旧模型/新旧数据对照"]
@@ -118,7 +118,7 @@ never_use_for_selection_or_pairing:
 
 allowed_private_sampling_inputs:
   - old_BT_raw_score
-  - frozen10_auxiliary_features
+  - aux11_auxiliary_features
 
 teacher_facing_candidate_file_must_exclude:
   - old_BT_raw_score
@@ -128,14 +128,14 @@ teacher_facing_candidate_file_must_exclude:
   - all_absolute_difficulty_fields
 ```
 
-旧 BT 分数和 frozen10 只帮助选择题目、构造边和做离线审计，不能写入交给 Qwen3-32B 的
+旧 BT 分数和 Aux11 只帮助选择题目、构造边和做离线审计，不能写入交给 Qwen3-32B 的
 候选 pair，避免 teacher 被旧模型结论提示。
 
 ## 4. 先给完整 Train Pool 生成旧 BT 分数
 
 ### 4.1 为什么需要旧模型分数
 
-十维特征描述题目结构和解题过程，但不能代替连续难度轴。如果只按十维特征平衡选题，
+11 维特征描述题目结构和解题过程，但不能代替连续难度轴。如果只按辅助特征平衡选题，
 仍可能大量集中在中间难度区域。
 
 因此使用 V3 已选出的最佳排序模型：
@@ -167,7 +167,7 @@ Qwen3.5-4B 全池推理。
 CPU_selection_benchmark:
   simulated_pool_records: 58962
   selected_records: 10000
-  wall_time_seconds: approximately_8.4
+  wall_time_seconds: approximately_12.8
   peak_memory: approximately_64_MB
 
 GPU_required_for:
@@ -181,19 +181,29 @@ CPU_only_after_scores_exist:
 ```
 
 如果分数缺失，脚本必须失败；禁止静默改用 API 五档、错误 `difficulty` 或纯随机选题。
+生成分数时必须排除旧 V3 的 2,000 个训练节点，以及所有 validation/test 节点；CPU
+选题时必须传入完全相同的 `--exclude-question-ids` 文件。分数文件与题池 hash 绑定，
+且分数 ID 集必须与排除后的候选池逐项相等，否则程序直接失败。这样 10,000 题表示新的
+训练覆盖，而不是再次为旧题购买 teacher pair 标签。
 
 ## 5. 10,000 道题如何选择
 
 ### 5.1 BT 十分位
 
 将刷新 Train Pool 按旧 V1 的 `raw_difficulty_score` 从低到高排序，使用稳定 ID 处理同分，
-切成 10 个等频区间。每个区间固定选择 1,000 道：
+切成 10 个等频区间。每个区间固定选择 1,000 道。在比例分配之前先执行类别覆盖下限：
+只要池中存在该类别，全局至少选择 `min(20, 池中数量)` 条；每个 BT 分位层内至少选择
+`min(2, 该层数量)` 条。一个题可同时满足 11 个头的多个覆盖目标，因此采用确定性
+set-cover 贪心选择，而不是构造 11 维联合笛卡尔积。
 
 ```yaml
-per_BT_decile:
-  distribution_matched: 800
-  rare_feature_protection: 100
-  deterministic_random_exploration: 100
+coverage_floor_first:
+  minimum_per_category_global: 20
+  minimum_per_category_per_BT_decile_when_available: 2
+remaining_slots:
+  distribution_matched: 0.80
+  rare_feature_protection: 0.10
+  deterministic_random_exploration: 0.10
 ```
 
 最终保证：
@@ -205,21 +215,29 @@ difficulty_axis_coverage: equal_frequency
 ```
 
 这里的十分位只表示旧 V1 模型下的相对位置，不是五档业务标签。
+每层固定 1,000 题是训练覆盖策略，故意接近“难度轴均匀采样”，并不声称复原线上题库的
+自然难度分布。自然分布只应由独立、冻结的 calibration 参考池表达；不能用这 10,000
+题的分位数直接设业务五档阈值。
 
-### 5.2 每个区间内部为什么分成 800/100/100
+### 5.2 每个区间内部怎样分配
 
-#### 800：十维边际分布匹配
+#### 第一步：11 维类别覆盖下限
 
-在每个难度区间内，尽量让 10,000 题的十维特征边际分布接近完整 Train Pool，避免选出的
+先避免罕见类别在抽样后消失或只剩一个偶然样本。源池本身不足时取实际可用数量。这个
+步骤优先于比例分配，所以最终三种选择原因不必机械等于 800/100/100。
+
+#### 剩余名额的 80%：11 维边际分布匹配
+
+在每个难度区间内，尽量让 10,000 题的 11 维特征边际分布接近完整 Train Pool，避免选出的
 题只覆盖少数题型或过程结构。
 
-#### 100：稀有类别保护
+#### 剩余名额的 10%：稀有类别保护
 
 单纯匹配总体分布仍可能让稀有类别数量太少，因此每个难度区间额外保护稀有特征类别。
-保护对象是每个特征的类别，不是强行覆盖十维联合笛卡尔积。十维联合组合过于稀疏，
+保护对象是每个特征的类别，不是强行覆盖 11 维联合笛卡尔积。联合组合过于稀疏，
 强行分层会造成大量空格或极小样本格。
 
-#### 100：确定性随机探索
+#### 剩余名额的 10%：确定性随机探索
 
 保留 10% 不依赖特征启发式的随机样本，避免完全被旧 BT 模型和旧特征体系锁定。随机选择
 由 seed 和 question ID 决定，可重复运行得到相同结果。
@@ -231,21 +249,23 @@ hard_checks:
   selected_questions: 10000
   BT_deciles: 10
   questions_per_decile: 1000
-  distribution_matched_per_decile: 800
-  rare_protected_per_decile: 100
-  random_exploration_per_decile: 100
+  old_v3_training_questions_excluded: true
+  all_validation_and_test_questions_excluded: true
   missing_score_ids: 0
   missing_feature_ids: 0
   duplicate_question_ids: 0
   train_only: true
   forbidden_fields_in_teacher_output: 0
+  score_IDs_exactly_equal_post_exclusion_pool: true
 
 feature_checks:
   zero_covered_source_categories: 0
+  minimum_category_count_global: 20_when_available
+  minimum_category_count_per_BT_decile: 2_when_available
   maximum_marginal_JSD: <=_0.05
 ```
 
-`question_selection.private.jsonl` 保存分数、十分位、选择原因和十维特征，用于内部审计；
+`question_selection.private.jsonl` 保存分数、十分位、选择原因和 11 维特征，用于内部审计；
 `questions.jsonl` 是无标签 teacher-facing 文件。
 
 ## 6. 40,000 Pair 的 Feature-Aware 构图
@@ -282,8 +302,8 @@ pair_source_target_weights:
 
 相较 V3，新增：
 
-- `feature_near`：十维特征接近，适合学习相似结构题之间的细粒度难度差；
-- `feature_contrast`：十维特征差异较大，提供跨类型、跨过程结构的全局约束。
+- `feature_near`：11 维特征接近，适合学习相似结构题之间的细粒度难度差；
+- `feature_contrast`：11 维特征差异较大，提供跨类型、跨过程结构的全局约束。
 
 保留：
 
@@ -293,7 +313,7 @@ pair_source_target_weights:
 - 连通分量桥接；
 - 低度节点修复。
 
-十维特征不会作为 teacher 输入。候选 pair metadata 只保留
+11 维特征不会作为 teacher 输入。候选 pair metadata 只保留
 `feature_hamming_distance`、`feature_match_count` 等聚合统计。
 
 ### 6.3 为什么同时需要近边和远边
@@ -404,7 +424,7 @@ prelabel_structure_feature_audit.json
 prelabel_candidate_score_audit.json
 ```
 
-只有硬结构检查全部通过、十维覆盖通过且旧 BT 分差分布没有明显坍缩，才启动 40,000
+只有硬结构检查全部通过、11 维覆盖通过且旧 BT 分差分布没有明显坍缩，才启动 40,000
 pair teacher 标注。
 
 ## 8. Teacher 打标阶段的新增点
@@ -440,7 +460,7 @@ monitor:
 
 ### 9.1 离线经典 BT 审计
 
-对 final pair 数据拟合一个不读文本、不读十维特征的经典 scalar Bradley–Terry 模型：
+对 final pair 数据拟合一个不读文本、不读辅助特征的经典 scalar Bradley–Terry 模型：
 
 \[
 P(A>B)=\sigma(s_A-s_B)
@@ -508,7 +528,8 @@ offline_bt_audit/pair_residuals.jsonl
 
 ### 10.1 只保留两个有意义的版本
 
-V3 已经证明 Aux10 权重 0.10 存在轻微负迁移，0.03 能缓解但仍未超过 BT-only。因此本轮
+V3 已经证明 Aux10 权重 0.10 存在轻微负迁移，0.03 能缓解但仍未超过 BT-only。本轮把
+图表和实验信息加工拆成两个独立头，形成 Aux11；因此
 不再重复训练已知较差的 0.10 版本。
 
 ```yaml
@@ -518,7 +539,7 @@ V4_train_A:
   auxiliary_loss_weight: 0.0
 
 V4_train_B:
-  name: BT_plus_Aux10_w003
+  name: BT_plus_Aux11_w003
   initialization: from_base_Qwen3.5_4B
   auxiliary_loss_weight: 0.03
 ```
@@ -547,9 +568,9 @@ primary_metric: validation_soft_pairwise_log_loss
 实际 optimizer steps/epoch 必须根据 teacher 清洗后的最终 pair 数重新计算，不能按
 40,000 候选边直接写死。
 
-### 10.2 为什么仍保留 Aux10 对照
+### 10.2 为什么仍保留 Aux11 对照
 
-数据扩大后，Aux10 的作用可能变化：
+数据扩大且信息加工头拆分后，Aux11 的作用可能变化：
 
 - 每个辅助类别样本更多，少数类头可能更稳定；
 - feature-aware 构边让同一题在不同关系中出现，辅助表示可能更有效；
@@ -577,7 +598,7 @@ role:
 
 - V3 最佳 BT-only；
 - V4 扩量 BT-only；
-- V4 扩量 Aux10-w0.03。
+- V4 扩量 Aux11-w0.03。
 
 但它已经参与过 V3 模型选择，不应成为 V4 唯一选型依据。
 
@@ -598,7 +619,7 @@ primary_role:
   - in_distribution_generalization
 ```
 
-新 validation 也要执行本轮的 BT 分数分层、十维覆盖检查、pre-label audit 和 post-label
+新 validation 也要执行本轮的 BT 分数分层、11 维覆盖检查、pre-label audit 和 post-label
 offline BT audit，但必须使用独立 validation pool，不能从训练图抽边。
 
 具体 1,000/4,000 规模应在 teacher 成本核算后预注册；一旦启动打标，不能根据模型结果
@@ -612,7 +633,7 @@ offline BT audit，但必须使用独立 validation pool，不能从训练图抽
 |---|---|---|
 | V3 最佳 BT-only | 已有旧结果；必要时复跑确认环境 | 必须评 |
 | V4 BT-only | 必须评 | 必须评 |
-| V4 Aux10-w0.03 | 必须评 | 必须评 |
+| V4 Aux11-w0.03 | 必须评 | 必须评 |
 
 这组对照可以拆开两个问题：
 
@@ -699,7 +720,7 @@ stage_2_pool_scoring:
 stage_3_question_selection:
   selected_10000: PENDING
   exact_1000_per_BT_decile: PENDING
-  all_frozen10_categories_covered: PENDING
+  all_aux11_categories_covered: PENDING
   maximum_feature_JSD_lte_0.05: PENDING
 
 stage_4_candidate_graph:
@@ -727,7 +748,7 @@ stage_7_postlabel_audit:
 
 stage_8_training:
   BT_only: PENDING
-  Aux10_w003: PENDING
+  Aux11_w003: PENDING
   all_quarter_epoch_checkpoints_evaluated: PENDING
 
 stage_9_double_validation:
@@ -776,7 +797,7 @@ to_do:
 
 本轮不以“pair 数更多”作为成功标准。只有同时满足以下条件，才能认为扩量有效：
 
-1. 10,000 题覆盖连续难度轴和十维特征，而不是重复堆积主流题；
+1. 10,000 题覆盖连续难度轴和 11 维特征，而不是重复堆积主流题；
 2. 40,000 条边保持连通、度数受控，并同时包含局部细粒度和全局跨度比较；
 3. 打标前审计通过，证明候选图值得投入 teacher 成本；
 4. 打标后离线 BT 审计通过，证明 soft labels 支持稳定一维排序；

@@ -500,7 +500,7 @@ def main() -> None:
         "split": next(iter(split_values)),
         "seed": args.seed,
         "selection_method": (
-            "frozen10 marginal coverage with deterministic deficit repair"
+            "versioned auxiliary marginal coverage with deterministic deficit repair"
             if feature_map is not None
             else "lowest sha256(seed, question_id)"
         ),

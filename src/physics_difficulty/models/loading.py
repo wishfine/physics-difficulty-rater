@@ -8,7 +8,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from physics_difficulty.models.qwen_difficulty import QwenDifficultyRater
-from physics_difficulty.schema import FEATURE_VALUES, LEGACY_MERGED_FEATURE_VALUES
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_V3_FEATURE_VALUES
 
 
 def _require_checkpoint_files(checkpoint_dir: Path) -> None:
@@ -41,10 +41,10 @@ def load_rater(model_path: str | Path, checkpoint_dir: str | Path) -> tuple[Qwen
     missing_heads = [name for name in required_heads if name not in head_state]
     if missing_heads:
         raise ValueError(f"Invalid difficulty_heads.pt in {checkpoint}: missing {missing_heads}")
-    step_weight = head_state["feature_heads"].get("step_count.weight")
+    feature_state = head_state["feature_heads"]
     feature_values = (
-        LEGACY_MERGED_FEATURE_VALUES
-        if step_weight is not None and int(step_weight.shape[0]) == 4
+        LEGACY_V3_FEATURE_VALUES
+        if "information_processing.weight" in feature_state
         else FEATURE_VALUES
     )
     model = QwenDifficultyRater(backbone, feature_values=feature_values).to(device)

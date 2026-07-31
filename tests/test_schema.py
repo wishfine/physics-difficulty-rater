@@ -9,8 +9,8 @@ from physics_difficulty.data.truncation import render_with_token_budget
 
 
 class SchemaTests(unittest.TestCase):
-    def test_schema_has_exactly_ten_features(self):
-        self.assertEqual(len(FEATURE_VALUES), 10)
+    def test_schema_has_eleven_features_after_processing_split(self):
+        self.assertEqual(len(FEATURE_VALUES), 11)
 
     def test_problem_structure_preserves_frozen_single_label(self):
         result = normalize_v2_features({"problem_structure": "电路综合"})
@@ -20,17 +20,14 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(normalize_v2_features({"problem_structure": "电路综合"})["problem_structure"], "电路综合")
         self.assertEqual(normalize_knowledge_domains({"problem_structure": "电路综合"}), ["电路"])
 
-    def test_legacy_high_step_bins_are_preserved(self):
-        self.assertEqual(normalize_v2_features({"step_count": "9-12步"})["step_count"], "9-12步")
-        self.assertEqual(normalize_v2_features({"step_count": "12步以上"})["step_count"], "12步以上")
+    def test_sparse_high_step_bins_are_merged(self):
+        self.assertEqual(normalize_v2_features({"step_count": "9-12步"})["step_count"], "9步以上")
+        self.assertEqual(normalize_v2_features({"step_count": "12步以上"})["step_count"], "9步以上")
 
-    def test_irreversible_legacy_merged_step_label_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "irreversible legacy merged label"):
-            normalize_v2_features({"step_count": "9步以上"})
-
-    def test_information_processing_merge(self):
+    def test_graph_and_experiment_requirements_stay_separate(self):
         features = normalize_v2_features({"graph_table_requirement": "直接读数", "experiment_requirement": "控制变量或故障分析"})
-        self.assertEqual(features["information_processing"], "图表与实验混合处理")
+        self.assertEqual(features["graph_table_requirement"], "直接读数")
+        self.assertEqual(features["experiment_requirement"], "控制变量或故障分析")
 
     def test_formatter_matches_api_subquestion_convention(self):
         rendered = format_question({"stem": "主题", "sub_questions": [{"question_id": "2", "stem": "后"}, {"question_id": "1", "stem": "前", "analysis": "解析"}]})

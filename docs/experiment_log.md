@@ -1449,7 +1449,7 @@ offline_bt_audit:
     - pair_residuals.jsonl
 ```
 
-## 16. step_count 恢复 frozen18 五档
+## 16. V4 辅助特征口径复核：保留 step_count 四档，拆分信息加工头
 
 ```yaml
 date: 2026-07-31
@@ -1458,18 +1458,29 @@ current_values:
   - 1-2步
   - 3-5步
   - 6-8步
-  - 9-12步
-  - 12步以上
-historical_merged_value: 9步以上
+  - 9步以上
+source_mapping:
+  9-12步: 9步以上
+  12步以上: 9步以上
+evidence:
+  local_frozen18_pilot_133:
+    9-12步: 1
+    12步以上: 0
+  existing_v3_validation_observed_step_classes: 3
 policy:
-  new_data: 从 teacher_features_legacy18.step_count 重新派生
-  merged_rows: 拒绝自动拆分
-  old_checkpoints: 允许按四档原 schema 只读评估
-  resume_old_checkpoint: 禁止续训为五档
+  step_count: 最高两档样本不足，保留稳定四档，不制造不可学习的极小类
+  graph_table_requirement: 独立四分类头
+  experiment_requirement: 独立四分类头
+  information_processing: 仅供旧 V3 checkpoint 只读兼容
 model_change:
-  step_count_head: Linear(H, 5)
+  step_count_head: Linear(H, 4)
+  auxiliary_heads: 10 -> 11
+  feature_schema_version: aux11_separate_processing_v4
 validation:
-  targeted_unittest: PASS
-  compileall: PASS
-  full_unittest: BLOCKED_BY_LOCAL_MISSING_NUMPY
+  targeted_unittest: 47_PASS_3_SKIPPED
+  synthetic_cpu_selection:
+    pool_questions: 58962
+    selected_questions: 10000
+    wall_time_seconds: 12.753
+    exact_questions_per_bt_decile: 1000
 ```

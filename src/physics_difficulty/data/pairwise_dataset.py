@@ -69,7 +69,7 @@ class PairwiseDifficultyDataset(Dataset):
                     if not 0 < quality <= 1:
                         raise ValueError("auxiliary feature quality must be in (0, 1]")
                     if set(side_features) != set(self.feature_to_id):
-                        raise ValueError("auxiliary feature names do not match the frozen ten-dimensional schema")
+                        raise ValueError("auxiliary feature names do not match the current versioned schema")
                     for name, value_to_id in self.feature_to_id.items():
                         value = side_features[name]
                         if value not in value_to_id:

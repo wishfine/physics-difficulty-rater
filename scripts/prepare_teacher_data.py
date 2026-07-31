@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument("--teacher-model", default="unknown")
     parser.add_argument("--source-dataset-id", default="unknown")
     parser.add_argument("--label-source", default="api_v7_frozen18")
-    parser.add_argument("--feature-schema-version", default="aux10_step_count5_v3")
+    parser.add_argument("--feature-schema-version", default="aux11_separate_processing_v4")
     parser.add_argument("--label-schema-version", default="v2_frozen18")
     args = parser.parse_args()
 

@@ -145,12 +145,13 @@ teacher_features_legacy18:
   - error_risk
 ```
 
-本地 Qwen 模型不直接训练全部 18 维，而是从中稳定派生 10 个单标签辅助任务。这样既不破坏冻结教师链路，又避免将稀疏或语义不稳定字段强行作为多任务目标。
+本地 Qwen 模型不直接训练全部 18 维，而是从中稳定派生 11 个单标签辅助任务。当前版本
+保留图表加工和实验加工两个独立任务，避免把同时含图表与实验的题压缩成一个互斥类别。
 
 ```yaml
 teacher_features:
   problem_structure: "9 分类：概念判断、直接计算、实验探究、图像表格分析、电路综合、力学综合、热学综合、光学声学综合、跨模块综合"
-  step_count: "5 分类：1-2步、3-5步、6-8步、9-12步、12步以上"
+  step_count: "4 分类：1-2步、3-5步、6-8步、9步以上"
   calculation_complexity: 4 分类
   reasoning_chain: 4 分类
   knowledge_count: 3 分类
@@ -158,13 +159,15 @@ teacher_features:
   state_count: 4 分类
   constraint_count: 3 分类
   variable_relation: 4 分类
-  information_processing: "由 graph_table_requirement 与 experiment_requirement 合并"
+  graph_table_requirement: "4 分类：无、直接读数、多组比较归纳、图像反推或外推"
+  experiment_requirement: "4 分类：无、基础操作或读数、控制变量或故障分析、方案设计或误差评价"
 ```
 
 `knowledge_domains` 仅作为元数据，不参与损失。完整 18 维保存于
-`teacher_features_legacy18`，派生 10 维保存于 `teacher_features`。当前五档辅助特征
-版本标记为 `aux10_step_count5_v3`。历史四档 `9步以上` 数据只能用于复现旧实验，
-不能与五档数据混合，也不能用于五档 checkpoint 续训。
+`teacher_features_legacy18`，派生 11 维保存于 `teacher_features`，版本标记为
+`aux11_separate_processing_v4`。原始 `9-12步` 和 `12步以上` 统一映射为 `9步以上`：
+现有数据中最高两档极度稀疏，强行拆开无法形成可学习且可稳定评估的类别。V3 的
+`information_processing` 合并头仅用于旧 checkpoint 只读兼容，不能续训成当前 11 头。
 
 ## 5. 教师打标、校验与清洗
 
@@ -227,7 +230,7 @@ python scripts/audit_teacher_feature_conversion.py \
 ```
 
 审计必须为 `status: PASS`；`frozen18_preserved` 表示原始 18 维未改写，
-`frozen10_exactly_derived` 表示 10 维逐条等于规范转换结果，
+`auxiliary_exactly_derived` 表示 11 维逐条等于当前规范转换结果，
 `raw_difficulty_used` 必须为 `false`。没有成功教师输出的记录不要伪造标签，
 保留在错误文件并从本批次 curated 数据排除即可。
 

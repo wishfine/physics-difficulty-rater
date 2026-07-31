@@ -14,8 +14,12 @@ FROZEN_18_FEATURE_NAMES = (
     "state_count", "constraint_count", "variable_relation", "experiment_requirement", "graph_table_requirement", "error_risk",
 )
 
-STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9-12步", "12步以上"]
-LEGACY_MERGED_STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9步以上"]
+STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9步以上"]
+INFORMATION_PROCESSING_VALUES = [
+    "无", "图表直接读数", "图表多组比较归纳", "图像反推或外推",
+    "实验基础操作或读数", "实验控制变量或故障分析",
+    "实验方案设计或误差评价", "图表与实验混合处理",
+]
 
 FEATURE_VALUES = {
     "problem_structure": PROBLEM_STRUCTURE_VALUES,
@@ -27,13 +31,15 @@ FEATURE_VALUES = {
     "state_count": ["单状态", "双状态", "多状态", "连续变化或临界状态"],
     "constraint_count": ["无约束", "单一约束", "多约束"],
     "variable_relation": ["无变量关系", "简单正反比", "图像函数关系", "多变量耦合关系"],
-    "information_processing": ["无", "图表直接读数", "图表多组比较归纳", "图像反推或外推", "实验基础操作或读数", "实验控制变量或故障分析", "实验方案设计或误差评价", "图表与实验混合处理"],
+    "graph_table_requirement": ["无", "直接读数", "多组比较归纳", "图像反推或外推"],
+    "experiment_requirement": ["无", "基础操作或读数", "控制变量或故障分析", "方案设计或误差评价"],
 }
 FEATURE_TO_ID = {name: {value: index for index, value in enumerate(values)} for name, values in FEATURE_VALUES.items()}
-LEGACY_MERGED_FEATURE_VALUES = {
-    **FEATURE_VALUES,
-    "step_count": LEGACY_MERGED_STEP_COUNT_VALUES,
+LEGACY_V3_FEATURE_VALUES = {
+    name: values for name, values in FEATURE_VALUES.items()
+    if name not in {"graph_table_requirement", "experiment_requirement"}
 }
+LEGACY_V3_FEATURE_VALUES["information_processing"] = INFORMATION_PROCESSING_VALUES
 
 LEGACY_DEFAULTS = {
     "problem_structure": "概念判断", "step_count": "1-2步", "calculation_complexity": "口算或直接判断",
@@ -70,11 +76,8 @@ def normalize_knowledge_domains(features: Dict[str, Any] | None) -> List[str]:
 def normalize_v2_features(legacy: Dict[str, Any] | None) -> Dict[str, Any]:
     legacy = legacy or {}
     step = str(legacy.get("step_count", LEGACY_DEFAULTS["step_count"])).strip()
-    if step == "9步以上":
-        raise ValueError(
-            "step_count='9步以上' is an irreversible legacy merged label; "
-            "rebuild from teacher_features_legacy18 containing '9-12步' or '12步以上'"
-        )
+    if step in {"9-12步", "12步以上"}:
+        step = "9步以上"
     result = {
         "problem_structure": normalize_problem_structure(legacy.get("problem_structure")),
         "step_count": _valid("step_count", step, "1-2步"),
@@ -85,7 +88,12 @@ def normalize_v2_features(legacy: Dict[str, Any] | None) -> Dict[str, Any]:
         "state_count": _valid("state_count", legacy.get("state_count"), "单状态"),
         "constraint_count": _valid("constraint_count", legacy.get("constraint_count"), "无约束"),
         "variable_relation": _valid("variable_relation", legacy.get("variable_relation"), "无变量关系"),
-        "information_processing": merge_information_processing(legacy.get("graph_table_requirement"), legacy.get("experiment_requirement")),
+        "graph_table_requirement": _valid(
+            "graph_table_requirement", legacy.get("graph_table_requirement"), "无"
+        ),
+        "experiment_requirement": _valid(
+            "experiment_requirement", legacy.get("experiment_requirement"), "无"
+        ),
     }
     return result
 

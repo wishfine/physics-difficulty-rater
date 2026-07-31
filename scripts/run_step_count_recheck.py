@@ -24,7 +24,7 @@ from physics_difficulty.data.text_only import forbidden_source_label_paths, ques
 from physics_difficulty.schema import FEATURE_VALUES
 
 
-PROMPT_VERSION = "physics_step_count_blind_recheck_five_bins_v2"
+PROMPT_VERSION = "physics_step_count_blind_recheck_v1"
 STEP_VALUES = set(FEATURE_VALUES["step_count"])
 REVIEWER_FORBIDDEN_KEYS = {
     "teacher_features", "teacher_features_legacy18", "teacher_difficulty_id",
@@ -36,15 +36,14 @@ USER_TEMPLATE = """请判断下面这道题中，初中学生在不看解析的�
 
 只计算必须的物理判断、建模、关系推导、关键计算或结论判断；不要把机械代数展开、重复代入、抄写题干、阅读解析算成额外步骤。题目有多个小问时，按完成整题所需的连续有效步骤总量判断。
 
-只能从以下五档中选一档：
+只能从以下四档中选一档：
 - 1-2步
 - 3-5步
 - 6-8步
-- 9-12步
-- 12步以上
+- 9步以上
 
 请先在内部分析，最终只输出一个 JSON 对象，不要输出其他内容：
-{{"step_count":"五档之一"}}
+{{"step_count":"四档之一"}}
 
 【题目】
 {text}

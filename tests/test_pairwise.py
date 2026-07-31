@@ -89,9 +89,10 @@ class PairwiseTests(unittest.TestCase):
             "teacher_difficulty_id": 1,
             "teacher_difficulty_level": "基础题",
             "teacher_features": {key: "x" for key in (
-                "calculation_complexity", "constraint_count", "information_processing",
-                "knowledge_count", "problem_structure", "reasoning_chain", "state_count",
-                "step_count", "subquestion_dependency", "variable_relation",
+                "calculation_complexity", "constraint_count", "experiment_requirement",
+                "graph_table_requirement", "knowledge_count", "problem_structure",
+                "reasoning_chain", "state_count", "step_count",
+                "subquestion_dependency", "variable_relation",
             )},
             "teacher_features_legacy18": {key: "x" for key in (
                 "additional_structure", "calculation_complexity", "constraint_count",

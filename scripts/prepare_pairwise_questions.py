@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.formatting import canonical_sections, format_question, render_sections
 from physics_difficulty.data.text_only import leakage_findings, normalize_text_only, question_group_identifier, question_identifier, source_text
 from physics_difficulty.data.truncation import render_with_token_budget
+from physics_difficulty.schema import FEATURE_VALUES
 
 FROZEN18_REQUIRED_TOP_LEVEL = {
     "diagnostics", "feature_metadata", "feature_schema_version", "id",
@@ -25,11 +26,7 @@ FROZEN18_REQUIRED_TOP_LEVEL = {
     "teacher_difficulty_level", "teacher_features", "teacher_features_legacy18",
     "teacher_model", "text",
 }
-V2_FEATURE_KEYS = {
-    "calculation_complexity", "constraint_count", "information_processing",
-    "knowledge_count", "problem_structure", "reasoning_chain", "state_count",
-    "step_count", "subquestion_dependency", "variable_relation",
-}
+V2_FEATURE_KEYS = set(FEATURE_VALUES)
 LEGACY18_FEATURE_KEYS = {
     "additional_structure", "calculation_complexity", "constraint_count",
     "cross_module", "error_risk", "experiment_requirement", "formula_count",

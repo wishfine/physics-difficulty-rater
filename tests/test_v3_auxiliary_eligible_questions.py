@@ -14,11 +14,11 @@ from physics_difficulty.schema import FEATURE_VALUES
 def feature_row(question_id: str, **overrides):
     features = {name: values[0] for name, values in FEATURE_VALUES.items()}
     features.update(overrides)
-    return {"id": question_id, "teacher_features": features, "feature_schema_version": "test_aux10"}
+    return {"id": question_id, "teacher_features": features, "feature_schema_version": "test_aux11"}
 
 
 class AuxiliaryEligibleQuestionTests(unittest.TestCase):
-    def test_keeps_only_questions_with_complete_aux10_without_copying_labels(self):
+    def test_keeps_only_questions_with_complete_auxiliary_labels_without_copying_labels(self):
         questions = [
             {"id": "q1", "split": "train", "text": "题一"},
             {"id": "q2", "split": "train", "text": "题二"},

@@ -121,18 +121,18 @@ def main() -> None:
         expected = normalize_v2_features(legacy)
         actual = row.get("teacher_features")
         if actual != expected:
-            errors.append(f"id={question_id}: frozen-10 features do not match schema conversion")
+            errors.append(f"id={question_id}: auxiliary features do not match schema conversion")
         else:
-            counts["frozen10_exact_match"] += 1
+            counts["auxiliary_exact_match"] += 1
         for name, values in FEATURE_VALUES.items():
             if not isinstance(actual, dict) or actual.get(name) not in values:
-                errors.append(f"id={question_id}: invalid frozen-10 value {name}={actual!r}")
+                errors.append(f"id={question_id}: invalid auxiliary value {name}={actual!r}")
                 break
 
     extra = sorted(set(curated_by_id) - set(source_by_id))
     counts["extra_curated_records"] = len(extra)
     report = {
-        "schema_version": "teacher_feature_conversion_audit_v1",
+        "schema_version": "teacher_feature_conversion_audit_v2",
         "source": str(source_path.resolve()),
         "curated": str(curated_path.resolve()),
         "source_records": source_records,
@@ -141,7 +141,7 @@ def main() -> None:
         "curated_unique_ids": len(curated_by_id),
         "counts": dict(counts),
         "frozen18_preserved": not any("frozen-18 features were changed" in item for item in errors),
-        "frozen10_exactly_derived": counts["frozen10_exact_match"] == counts["matched"],
+        "auxiliary_exactly_derived": counts["auxiliary_exact_match"] == counts["matched"],
         "raw_difficulty_used": False,
         "ignored_source_fields": ["difficulty"],
         "errors": errors,

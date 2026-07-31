@@ -181,8 +181,9 @@ def main() -> None:
         resume_feature_values = checkpoint_feature_values(resume_config, state)
         if args.auxiliary_features and resume_feature_values != FEATURE_VALUES:
             raise ValueError(
-                "cannot resume a legacy four-bin step_count checkpoint with the current "
-                "five-bin schema; rebuild five-bin auxiliary data and start a new run"
+                "cannot resume a legacy merged information-processing checkpoint with "
+                "the current separate graph/experiment heads; rebuild auxiliary data "
+                "and start a new run"
             )
         model.norm.load_state_dict(state["norm"])
         model.score_head.load_state_dict(state["score_head"])

@@ -17,8 +17,8 @@ class AggregateStepCountRecheckTests(unittest.TestCase):
             {"question_id": "q2", "original_step_count": "3-5步"},
         ]
         votes = [
-            *[{"question_id": "q1", "valid": True, "parsed_step_count": value} for value in ("12步以上", "12步以上", "9-12步")],
-            *[{"question_id": "q2", "valid": True, "parsed_step_count": value} for value in ("6-8步", "3-5步", "9-12步")],
+            *[{"question_id": "q1", "valid": True, "parsed_step_count": value} for value in ("9步以上", "9步以上", "6-8步")],
+            *[{"question_id": "q2", "valid": True, "parsed_step_count": value} for value in ("6-8步", "3-5步", "9步以上")],
         ]
         with tempfile.TemporaryDirectory() as directory:
             directory = Path(directory)
@@ -32,11 +32,11 @@ class AggregateStepCountRecheckTests(unittest.TestCase):
                 "--minimum-valid-votes", "3", "--minimum-winner-votes", "2",
             ], check=True, capture_output=True, text=True)
             rows = [json.loads(line) for line in results.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(rows[0]["rechecked_step_count"], "12步以上")
+            self.assertEqual(rows[0]["rechecked_step_count"], "9步以上")
             self.assertEqual(rows[0]["action"], "apply")
             self.assertEqual(rows[1]["action"], "abstain")
             override_rows = [json.loads(line) for line in overrides.read_text(encoding="utf-8").splitlines()]
-            self.assertEqual(override_rows, [{"question_id": "q1", "step_count": "12步以上"}])
+            self.assertEqual(override_rows, [{"question_id": "q1", "step_count": "9步以上"}])
 
 
 if __name__ == "__main__":

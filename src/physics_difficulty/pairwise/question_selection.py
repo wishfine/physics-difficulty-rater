@@ -85,6 +85,69 @@ def _reason_counts(
     return distribution, rare, random
 
 
+def _category_floor_targets(
+    ids: Sequence[str],
+    assignments: dict[str, int],
+    features: dict[str, dict[str, str]],
+    *,
+    deciles: int,
+    minimum_global: int,
+    minimum_per_decile: int,
+) -> dict[int, dict[tuple[str, str], int]]:
+    """Allocate deterministic category coverage floors across BT deciles."""
+    if minimum_global < 0 or minimum_per_decile < 0:
+        raise ValueError("category coverage floors must be non-negative")
+    pool_counts: Counter[tuple[int, str, str]] = Counter()
+    global_counts: Counter[tuple[str, str]] = Counter()
+    for question_id in ids:
+        decile = assignments[question_id]
+        for name in FEATURE_VALUES:
+            category = (name, features[question_id][name])
+            pool_counts[(decile, *category)] += 1
+            global_counts[category] += 1
+
+    targets: dict[int, dict[tuple[str, str], int]] = {
+        decile: {} for decile in range(1, deciles + 1)
+    }
+    for category, global_count in sorted(global_counts.items()):
+        allocations = {
+            decile: min(
+                minimum_per_decile,
+                pool_counts[(decile, *category)],
+            )
+            for decile in range(1, deciles + 1)
+        }
+        desired = max(
+            sum(allocations.values()),
+            min(minimum_global, global_count),
+        )
+        remaining = desired - sum(allocations.values())
+        while remaining:
+            candidates = [
+                decile
+                for decile in range(1, deciles + 1)
+                if allocations[decile] < pool_counts[(decile, *category)]
+            ]
+            if not candidates:
+                raise RuntimeError(f"cannot allocate category floor for {category}")
+            chosen = max(
+                candidates,
+                key=lambda decile: (
+                    (
+                        pool_counts[(decile, *category)] - allocations[decile]
+                    )
+                    / pool_counts[(decile, *category)],
+                    -decile,
+                ),
+            )
+            allocations[chosen] += 1
+            remaining -= 1
+        for decile, count in allocations.items():
+            if count:
+                targets[decile][category] = count
+    return targets
+
+
 def _add_selected(
     question_id: str,
     reason: str,
@@ -95,6 +158,60 @@ def _add_selected(
     selected[question_id] = reason
     for name in FEATURE_VALUES:
         selected_counts[(name, features[question_id][name])] += 1
+
+
+def _select_category_floor(
+    pool: list[str],
+    targets: dict[tuple[str, str], int],
+    selected: dict[str, str],
+    selected_counts: Counter[tuple[str, str]],
+    features: dict[str, dict[str, str]],
+    *,
+    quota: int,
+    seed: int,
+    decile: int,
+) -> None:
+    """Greedy multi-feature set cover until every allocated floor is met."""
+    position = 0
+    while True:
+        deficits = {
+            category: target - selected_counts[category]
+            for category, target in targets.items()
+            if selected_counts[category] < target
+        }
+        if not deficits:
+            return
+        if len(selected) >= quota:
+            raise ValueError(
+                f"BT decile {decile} category floors exceed its quota {quota}"
+            )
+        candidates = [question_id for question_id in pool if question_id not in selected]
+        if not candidates:
+            raise ValueError(f"BT decile {decile} ran out of category-floor candidates")
+
+        def coverage(question_id: str) -> tuple[float, str]:
+            score = 0.0
+            for name in FEATURE_VALUES:
+                category = (name, features[question_id][name])
+                if category in deficits:
+                    score += deficits[category] / targets[category]
+            return score, _stable_key(
+                seed + position, question_id, f"category-floor-{decile}"
+            )
+
+        chosen = max(candidates, key=coverage)
+        if coverage(chosen)[0] <= 0:
+            raise RuntimeError(
+                f"BT decile {decile} cannot satisfy category floors {deficits}"
+            )
+        _add_selected(
+            chosen,
+            "category_floor",
+            selected,
+            selected_counts,
+            features,
+        )
+        position += 1
 
 
 def _select_rare(
@@ -228,6 +345,8 @@ def select_questions_by_bt_decile(
     distribution_fraction: float = 0.80,
     rare_fraction: float = 0.10,
     random_fraction: float = 0.10,
+    minimum_category_count_global: int = 20,
+    minimum_category_count_per_decile: int = 2,
     seed: int = 42,
 ) -> list[dict[str, Any]]:
     """Return an exact, deterministic selection with per-decile reason quotas."""
@@ -235,6 +354,14 @@ def select_questions_by_bt_decile(
     if not deciles <= target_count <= len(ids):
         raise ValueError("target_count must be between the BT bin count and pool size")
     assignments = assign_bt_deciles(ids, scores, deciles=deciles, seed=seed)
+    floor_targets = _category_floor_targets(
+        ids,
+        assignments,
+        features,
+        deciles=deciles,
+        minimum_global=minimum_category_count_global,
+        minimum_per_decile=minimum_category_count_per_decile,
+    )
     pools: dict[int, list[str]] = defaultdict(list)
     for question_id in ids:
         pools[assignments[question_id]].append(question_id)
@@ -251,16 +378,27 @@ def select_questions_by_bt_decile(
             raise ValueError(
                 f"BT decile {decile} has {len(pool)} questions, below quota {quota}"
             )
+        selected: dict[str, str] = {}
+        selected_counts: Counter[tuple[str, str]] = Counter()
+        _select_category_floor(
+            pool,
+            floor_targets[decile],
+            selected,
+            selected_counts,
+            features,
+            quota=quota,
+            seed=seed,
+            decile=decile,
+        )
+        remaining_quota = quota - len(selected)
         distribution_count, rare_count, random_count = _reason_counts(
-            quota,
+            remaining_quota,
             distribution_fraction,
             rare_fraction,
             random_fraction,
         )
-        selected: dict[str, str] = {}
-        selected_counts: Counter[tuple[str, str]] = Counter()
         random_ids = sorted(
-            pool,
+            (question_id for question_id in pool if question_id not in selected),
             key=lambda question_id: _stable_key(
                 seed, question_id, f"random-{decile}"
             ),

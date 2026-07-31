@@ -2,8 +2,7 @@
   "seed": 42,
   "target_questions": 2000,
   "stratum_quotas": {
-    "existing_9_12_control": 11,
-    "existing_12plus_control": 10,
+    "existing_9plus_control": 21,
     "current_6_8": 850,
     "progressive_subquestions": 350,
     "high_reasoning_complexity": 350,

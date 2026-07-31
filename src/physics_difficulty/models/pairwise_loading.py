@@ -9,7 +9,7 @@ import torch
 from transformers import AutoModel, AutoTokenizer
 
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
-from physics_difficulty.schema import FEATURE_VALUES, LEGACY_MERGED_FEATURE_VALUES
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_V3_FEATURE_VALUES
 
 
 def checkpoint_feature_values(
@@ -21,9 +21,8 @@ def checkpoint_feature_values(
             raise ValueError("checkpoint feature_values must be an object")
         return {str(name): [str(value) for value in values] for name, values in configured.items()}
     auxiliary_state = state.get("auxiliary_heads") or {}
-    step_weight = auxiliary_state.get("step_count.weight")
-    if step_weight is not None and int(step_weight.shape[0]) == 4:
-        return {name: list(values) for name, values in LEGACY_MERGED_FEATURE_VALUES.items()}
+    if "information_processing.weight" in auxiliary_state:
+        return {name: list(values) for name, values in LEGACY_V3_FEATURE_VALUES.items()}
     return {name: list(values) for name, values in FEATURE_VALUES.items()}
 
 

@@ -40,7 +40,7 @@ def source_row(question_id="q1"):
 
 
 class TeacherFeatureConversionAuditTests(unittest.TestCase):
-    def test_audit_checks_exact_frozen10_derivation_and_ignores_raw_difficulty(self):
+    def test_audit_checks_exact_auxiliary_derivation_and_ignores_raw_difficulty(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source.jsonl"
@@ -55,7 +55,7 @@ class TeacherFeatureConversionAuditTests(unittest.TestCase):
                         "teacher_features_legacy18": source_row()["difficulty_rating"]["features"],
                         "teacher_features": {
                             "problem_structure": "直接计算",
-                            "step_count": "9-12步",
+                            "step_count": "9步以上",
                             "calculation_complexity": "多公式联立",
                             "reasoning_chain": "多层因果推理",
                             "knowledge_count": "2-3个",
@@ -63,7 +63,8 @@ class TeacherFeatureConversionAuditTests(unittest.TestCase):
                             "state_count": "双状态",
                             "constraint_count": "单一约束",
                             "variable_relation": "简单正反比",
-                            "information_processing": "无",
+                            "graph_table_requirement": "无",
+                            "experiment_requirement": "无",
                         },
                     },
                     ensure_ascii=False,
@@ -83,7 +84,8 @@ class TeacherFeatureConversionAuditTests(unittest.TestCase):
             result_json = json.loads(report.read_text(encoding="utf-8"))
             self.assertEqual(result_json["status"], "PASS")
             self.assertFalse(result_json["raw_difficulty_used"])
-            self.assertEqual(result_json["counts"]["frozen10_exact_match"], 1)
+            self.assertEqual(result_json["counts"]["auxiliary_exact_match"], 1)
+            self.assertTrue(result_json["auxiliary_exactly_derived"])
 
 
 if __name__ == "__main__":

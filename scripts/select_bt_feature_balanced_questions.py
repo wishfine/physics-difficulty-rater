@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select a CPU-only BT-decile and frozen-ten balanced training question set."""
+"""Select a CPU-only BT-decile and auxiliary-feature balanced training set."""
 from __future__ import annotations
 
 import argparse
@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from physics_difficulty.data.text_only import forbidden_source_label_paths
+from physics_difficulty.schema import FEATURE_VALUES
 from physics_difficulty.pairwise.feature_coverage import (
     feature_coverage_report,
     validate_feature_map,
@@ -54,9 +55,28 @@ def jsonl_rows(path: Path) -> Iterable[dict[str, Any]]:
             yield value
 
 
-def question_pool(path: Path) -> tuple[list[str], dict[str, Counter[str]]]:
+def load_excluded_ids(paths: list[str]) -> set[str]:
+    excluded: set[str] = set()
+    for value in paths:
+        path = Path(value)
+        for line_number, row in enumerate(jsonl_rows(path), 1):
+            question_id = str(row.get("id") or row.get("question_id") or "").strip()
+            if not question_id:
+                raise ValueError(
+                    f"{path}:{line_number}: exclusion row lacks id/question_id"
+                )
+            excluded.add(question_id)
+    return excluded
+
+
+def question_pool(
+    path: Path,
+    excluded_ids: set[str] | None = None,
+) -> tuple[list[str], dict[str, Counter[str]], int]:
+    excluded_ids = excluded_ids or set()
     ids: list[str] = []
     seen: set[str] = set()
+    excluded_records = 0
     diagnostics: dict[str, Counter[str]] = {
         "input_length_bucket": Counter(),
         "has_analysis": Counter(),
@@ -77,6 +97,10 @@ def question_pool(path: Path) -> tuple[list[str], dict[str, Counter[str]]]:
             )
         if not str(row.get("text") or "").strip():
             raise ValueError(f"question {question_id} has empty text")
+        if question_id in excluded_ids:
+            excluded_records += 1
+            seen.add(question_id)
+            continue
         values = row.get("diagnostics") or {}
         for name in diagnostics:
             diagnostics[name][str(values.get(name, "unknown"))] += 1
@@ -84,7 +108,7 @@ def question_pool(path: Path) -> tuple[list[str], dict[str, Counter[str]]]:
         seen.add(question_id)
     if not ids:
         raise ValueError("question pool is empty")
-    return ids, diagnostics
+    return ids, diagnostics, excluded_records
 
 
 def load_scores(path: Path, expected_ids: set[str]) -> dict[str, float]:
@@ -140,6 +164,51 @@ def count_report(
     }
 
 
+def validate_category_floors(
+    pool_features: dict[str, dict[str, str]],
+    selected_ids: set[str],
+    *,
+    minimum_count: int,
+    scope: str,
+) -> dict[str, Any]:
+    checks: dict[str, dict[str, dict[str, int | bool]]] = {}
+    violations: list[str] = []
+    for name, values in FEATURE_VALUES.items():
+        checks[name] = {}
+        for value in values:
+            pool_count = sum(
+                features[name] == value for features in pool_features.values()
+            )
+            if pool_count == 0:
+                continue
+            selected_count = sum(
+                question_id in selected_ids and features[name] == value
+                for question_id, features in pool_features.items()
+            )
+            required = min(minimum_count, pool_count)
+            passed = selected_count >= required
+            checks[name][value] = {
+                "pool_count": pool_count,
+                "required_selected_count": required,
+                "selected_count": selected_count,
+                "passed": passed,
+            }
+            if not passed:
+                violations.append(
+                    f"{scope}:{name}={value}: selected={selected_count}, required={required}"
+                )
+    if violations:
+        raise ValueError(
+            "auxiliary category coverage floor failed: " + "; ".join(violations[:20])
+        )
+    return {
+        "scope": scope,
+        "minimum_requested": minimum_count,
+        "status": "PASS",
+        "checks": checks,
+    }
+
+
 def write_selected_questions(
     source: Path,
     output: Path,
@@ -185,6 +254,15 @@ def main() -> None:
     parser.add_argument("--features-file", required=True)
     parser.add_argument("--scores", required=True)
     parser.add_argument("--scores-manifest", required=True)
+    parser.add_argument(
+        "--exclude-question-ids",
+        action="append",
+        default=[],
+        help=(
+            "Question JSONL whose id/question_id values must be excluded; repeatable. "
+            "Use the same arguments when generating --scores."
+        ),
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--audit-output", required=True)
     parser.add_argument("--manifest", required=True)
@@ -198,6 +276,8 @@ def main() -> None:
     parser.add_argument("--rare-fraction", type=float, default=0.10)
     parser.add_argument("--random-fraction", type=float, default=0.10)
     parser.add_argument("--maximum-feature-jsd", type=float, default=0.05)
+    parser.add_argument("--minimum-category-count-global", type=int, default=20)
+    parser.add_argument("--minimum-category-count-per-decile", type=int, default=2)
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -213,7 +293,10 @@ def main() -> None:
     if scores_manifest.get("output_sha256") != score_hash:
         raise ValueError("score file hash does not match its manifest")
 
-    ids, pool_diagnostics = question_pool(questions_path)
+    excluded_ids = load_excluded_ids(args.exclude_question_ids)
+    ids, pool_diagnostics, excluded_records = question_pool(
+        questions_path, excluded_ids
+    )
     expected_ids = set(ids)
     scores = load_scores(scores_path, expected_ids)
     features, api_levels = load_features(Path(args.features_file), expected_ids)
@@ -238,26 +321,35 @@ def main() -> None:
         distribution_fraction=args.distribution_fraction,
         rare_fraction=args.rare_fraction,
         random_fraction=args.random_fraction,
+        minimum_category_count_global=args.minimum_category_count_global,
+        minimum_category_count_per_decile=args.minimum_category_count_per_decile,
         seed=args.seed,
     )
     selected_ids = {row["question_id"] for row in selected}
     selected_order = [row["question_id"] for row in selected]
     coverage = feature_coverage_report(features, selected_ids)
     if coverage["zero_covered_source_categories"]:
-        raise ValueError("selection dropped one or more frozen-ten categories")
+        raise ValueError("selection dropped one or more auxiliary categories")
     if (
         coverage["maximum_marginal_jensen_shannon_divergence"]
         > args.maximum_feature_jsd
     ):
         raise ValueError(
-            "selected frozen-ten distribution exceeds maximum JSD: "
+            "selected auxiliary-feature distribution exceeds maximum JSD: "
             f"{coverage['maximum_marginal_jensen_shannon_divergence']:.6f}"
         )
+    global_floor_checks = validate_category_floors(
+        features,
+        selected_ids,
+        minimum_count=args.minimum_category_count_global,
+        scope="global",
+    )
 
     assignments = assign_bt_deciles(
         ids, scores, deciles=args.deciles, seed=args.seed
     )
     per_decile_coverage = {}
+    per_decile_floor_checks = {}
     for decile in range(1, args.deciles + 1):
         decile_features = {
             question_id: features[question_id]
@@ -271,6 +363,12 @@ def main() -> None:
         }
         per_decile_coverage[str(decile)] = feature_coverage_report(
             decile_features, selected_in_decile
+        )
+        per_decile_floor_checks[str(decile)] = validate_category_floors(
+            decile_features,
+            selected_in_decile,
+            minimum_count=args.minimum_category_count_per_decile,
+            scope=f"bt_decile_{decile}",
         )
 
     selected_diagnostics = write_selected_questions(
@@ -300,7 +398,7 @@ def main() -> None:
     reason_counts = Counter(row["selection_reason"] for row in selected)
     decile_counts = Counter(str(row["bt_decile"]) for row in selected)
     report = {
-        "schema_version": "bt_feature_balanced_question_selection_v1",
+        "schema_version": "bt_feature_balanced_question_selection_v2",
         "cpu_only": True,
         "loads_model": False,
         "questions": str(questions_path.resolve()),
@@ -312,6 +410,11 @@ def main() -> None:
             "checkpoint_fingerprint"
         ),
         "pool_questions": len(ids),
+        "source_questions": len(ids) + excluded_records,
+        "excluded_questions": excluded_records,
+        "excluded_question_files": [
+            str(Path(path).resolve()) for path in args.exclude_question_ids
+        ],
         "selected_questions": len(selected),
         "seed": args.seed,
         "selection_fractions": {
@@ -319,10 +422,18 @@ def main() -> None:
             "rare_feature_protection": args.rare_fraction,
             "random_exploration": args.random_fraction,
         },
+        "category_coverage_floors": {
+            "global": args.minimum_category_count_global,
+            "per_bt_decile_when_available": args.minimum_category_count_per_decile,
+        },
         "selection_reason_counts": dict(reason_counts),
         "bt_deciles": dict(sorted(decile_counts.items(), key=lambda item: int(item[0]))),
         "feature_coverage": coverage,
         "feature_coverage_by_bt_decile": per_decile_coverage,
+        "category_floor_checks": {
+            "global": global_floor_checks,
+            "by_bt_decile": per_decile_floor_checks,
+        },
         "api_teacher_level_audit_only": count_report(api_levels, selected_ids),
         "diagnostics": {
             name: {

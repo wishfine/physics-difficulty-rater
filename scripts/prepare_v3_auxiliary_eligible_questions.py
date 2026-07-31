@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep label-free V3 questions that have a complete, valid aux10 label row.
+"""Keep label-free V3 questions that have a complete, valid auxiliary label row.
 
 The output deliberately copies only the original question records.  Auxiliary
 labels are used here for coverage accounting and eligibility; they are attached
@@ -45,12 +45,12 @@ def valid_features(value: Any) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Prepare aux10-eligible label-free V3 questions")
+    parser = argparse.ArgumentParser(description="Prepare auxiliary-eligible label-free V3 questions")
     parser.add_argument("--questions", required=True, help="Text-only V3 question JSONL")
     parser.add_argument("--features", required=True, help="V2 curated JSONL containing teacher_features")
     parser.add_argument("--output", required=True, help="Eligible label-free V3 questions")
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--excluded-output", help="ID-only reasons for questions not eligible for aux10")
+    parser.add_argument("--excluded-output", help="ID-only reasons for questions not eligible for auxiliary training")
     parser.add_argument("--minimum-class-support", type=int, default=100)
     args = parser.parse_args()
     if args.minimum_class_support < 1:
@@ -126,13 +126,13 @@ def main() -> None:
     output_path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in accepted), encoding="utf-8")
     excluded_path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in excluded), encoding="utf-8")
     manifest = {
-        "schema_version": "v3_auxiliary_eligible_questions_v1",
+        "schema_version": "v4_aux11_eligible_questions_v1",
         "questions": str(question_path.resolve()),
         "feature_source": str(feature_path.resolve()),
         "output": str(output_path.resolve()),
         "excluded_output": str(excluded_path.resolve()),
         "question_records": len(seen_ids),
-        "feature_records_with_complete_aux10": len(by_id),
+        "feature_records_with_complete_auxiliary_labels": len(by_id),
         "eligible_questions": len(accepted),
         "excluded_questions": len(excluded),
         "split_counts": dict(split_counts),

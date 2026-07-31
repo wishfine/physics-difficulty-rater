@@ -534,22 +534,26 @@ anchor calibration 对照实验：用锚点分数拟合四个有教育语义的�
 
 选题前先使用已有最佳 BT-only checkpoint 生成 train pool 单题分数。实际选择完全在
 CPU 内存中运行，读取分数文件和其 hash-bound manifest，不加载 Qwen。train pool 按
-分数排名分成十个等频区间，每个区间选择 1,000 道：
+分数排名分成十个等频区间，每个区间选择 1,000 道。先满足 11 个辅助头各类别的覆盖
+下限，再分配剩余名额：
 
 ```yaml
-per_bt_decile:
-  distribution_matched: 800
-  rare_feature_protection: 100
-  deterministic_random_exploration: 100
+category_floor:
+  global: 20_when_available
+  per_bt_decile: 2_when_available
+remaining_slots:
+  distribution_matched: 0.80
+  rare_feature_protection: 0.10
+  deterministic_random_exploration: 0.10
 ```
 
-冻结十维通过独立 `--features-file` 输入，用于：
+当前 11 维通过独立 `--features-file` 输入，用于：
 
-1. 每个 BT 分数区间内尽量保持十个特征各自的边际分布；
+1. 每个 BT 分数区间内尽量保持 11 个特征各自的边际分布；
 2. 保护稀有特征类别并保留 10% 模型无关的探索样本；
 3. 构边时生成 feature-near 和 feature-contrast pair。
 
-不按十维联合笛卡尔积强行分层，因为联合组合过于稀疏。构图 manifest 必须满足：
+不按 11 维联合笛卡尔积强行分层，因为联合组合过于稀疏。构图 manifest 必须满足：
 
 ```yaml
 feature_coverage:
@@ -575,7 +579,7 @@ graph_bridge: 0.05
 low_degree_repair: 0.05
 ```
 
-十维字段不写入送给教师的候选 pair；pair metadata 只保留
+11 维字段不写入送给教师的候选 pair；pair metadata 只保留
 `feature_hamming_distance` 和 `feature_match_count` 等聚合诊断值。
 
 CPU 选题命令为：
@@ -587,6 +591,8 @@ python scripts/select_bt_feature_balanced_questions.py \
   --features-file "$CURATED" \
   --scores "$POOL_SCORES" \
   --scores-manifest "$POOL_SCORES_MANIFEST" \
+  --exclude-question-ids "$OLD_V3_QUESTIONS" \
+  --exclude-question-ids "$V3_VALIDATION_QUESTIONS" \
   --output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
   --audit-output "$PAIR_ROOT/train_10k_40k/question_selection.private.jsonl" \
   --manifest "$PAIR_ROOT/train_10k_40k/question_selection.manifest.json"
@@ -598,7 +604,7 @@ python scripts/select_bt_feature_balanced_questions.py \
 ## 13. 离线 Bradley--Terry pair 数据审计
 
 教师打标并清洗后，先运行 `scripts/audit_pairwise_with_bt.py`。该脚本不加载题目文本、
-Qwen 或十维特征，只为每个 question ID 拟合一个标量：
+Qwen 或辅助特征，只为每个 question ID 拟合一个标量：
 
 ```text
 P(A > B) = sigmoid(s_A - s_B)

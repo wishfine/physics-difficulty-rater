@@ -1,0 +1,58 @@
+schema_version: aux11_separate_processing_v4
+inherits_primary_label_contract: teacher_label_v2.yaml
+teacher_feature_source:
+  source: difficulty_rating.features
+  required_raw_fields: 18
+auxiliary_features:
+  problem_structure:
+    type: single_label
+    source: legacy.problem_structure
+    values: [概念判断, 直接计算, 实验探究, 图像表格分析, 电路综合, 力学综合, 热学综合, 光学声学综合, 跨模块综合]
+  step_count:
+    type: ordinal_single_label
+    source: legacy.step_count
+    values: [1-2步, 3-5步, 6-8步, 9步以上]
+    normalization:
+      9-12步: 9步以上
+      12步以上: 9步以上
+  calculation_complexity:
+    type: ordinal_single_label
+    source: legacy.calculation_complexity
+    values: [口算或直接判断, 简单笔算, 多公式联立, 复杂方程或范围计算]
+  reasoning_chain:
+    type: ordinal_single_label
+    source: legacy.reasoning_chain
+    values: [直接套用, 简单因果推理, 多层因果推理, 逆向推理或临界分析]
+  knowledge_count:
+    type: ordinal_single_label
+    source: legacy.knowledge_count
+    values: [1个, 2-3个, 4个及以上]
+  subquestion_dependency:
+    type: single_label
+    source: legacy.subquestion_dependency
+    values: [无多问, 多问但相互独立, 多问且层层递进]
+  state_count:
+    type: ordinal_single_label
+    source: legacy.state_count
+    values: [单状态, 双状态, 多状态, 连续变化或临界状态]
+  constraint_count:
+    type: ordinal_single_label
+    source: legacy.constraint_count
+    values: [无约束, 单一约束, 多约束]
+  variable_relation:
+    type: single_label
+    source: legacy.variable_relation
+    values: [无变量关系, 简单正反比, 图像函数关系, 多变量耦合关系]
+  graph_table_requirement:
+    type: single_label
+    source: legacy.graph_table_requirement
+    values: [无, 直接读数, 多组比较归纳, 图像反推或外推]
+  experiment_requirement:
+    type: single_label
+    source: legacy.experiment_requirement
+    values: [无, 基础操作或读数, 控制变量或故障分析, 方案设计或误差评价]
+compatibility:
+  historical_v3_information_processing:
+    values: [无, 图表直接读数, 图表多组比较归纳, 图像反推或外推, 实验基础操作或读数, 实验控制变量或故障分析, 实验方案设计或误差评价, 图表与实验混合处理]
+    policy: evaluation_only_with_embedded_or_inferred_legacy_schema
+  resume_historical_auxiliary_checkpoint: forbidden

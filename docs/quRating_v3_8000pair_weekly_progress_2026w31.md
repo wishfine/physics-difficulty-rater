@@ -1,4 +1,4 @@
-# QuRating V3 8000-Pair 全流程实验汇报
+# QuRating V3 8000-Pair 阶段性进度报告（截至 2026-W31）
 
 ```yaml
 project: physics-difficulty-rater
@@ -27,17 +27,21 @@ status:
 > 术语说明：本文中的“QuRating V3”指整条 pairwise 技术路线；学生模型内部又做了
 > V1、V2、V3 三个训练版本。两者不是同一个版本概念。
 
+> 文档定位：这是截至 2026-W31 的阶段性基线记录，固化本轮 25k 原始题、2,000 训练题、
+> 8,000 候选 pair 和 7,509 条训练边的真实产物、实验结果与未完成事项。后续 10k 题 / 40k
+> pair 扩展只记录相对本报告新增的设计和验证，避免重复堆叠同一条链路。
+
 ## 1. 项目目标
 
 原有方案直接拟合大模型输出的“送分题—压轴题”五档绝对标签，容易受到档位边界模糊、
 不同轮次标尺漂移和类别分布变化的影响。本轮改为学习相对难度：
 
-\[
+$$
 P(A \text{ 比 } B \text{ 难})=\sigma(s(A)-s(B))
-\]
+$$
 
-其中 \(s(q)\) 是学生模型对单道题输出的连续难度标量。训练阶段使用题对偏好监督，
-推理阶段每道题只需独立计算一次 \(s(q)\)，不需要再为新题寻找一个已知题目进行比较。
+其中 $s(q)$ 是学生模型对单道题输出的连续难度标量。训练阶段使用题对偏好监督，
+推理阶段每道题只需独立计算一次 $s(q)$，不需要再为新题寻找一个已知题目进行比较。
 
 本轮实验要回答四个问题：
 
@@ -46,32 +50,85 @@ P(A \text{ 比 } B \text{ 难})=\sigma(s(A)-s(B))
 3. Qwen3.5-4B LoRA 学生模型能否学到可泛化的连续难度排序；
 4. 十维辅助特征是否能改善排序，或者会产生多任务负迁移。
 
-## 2. 全流程概览
+## 2. 阶段总览：我们解决的四件事
+
+这张图刻意不放 pair 数量、checkpoint 名称或脚本步骤。它回答的是：为什么这条路线能把
+“题目难度”做成一个可训练、可复用、可解释的业务能力。
 
 ```mermaid
-flowchart TD
-    A["原始 25,000 道物理题"] --> B["清洗、去重、泄漏检查"]
-    B --> C["按 question_group_id 划分 Train / Validation / Test"]
-    C --> D["Train 中确定性选择 2,000 题"]
-    D --> E["构造 8,000 条无标签比较边"]
-    E --> F["Qwen3-32B 正反序 nonthinking 投票"]
-    F --> G{"稳定且结论明确？"}
-    G -- "是" --> H["直接采用 nonthinking"]
-    G -- "否" --> I["thinking_1024 升级复判"]
-    H --> J["正反序聚合、可靠性加权"]
-    I --> J
-    J --> K["过滤 491 条位置敏感边"]
-    K --> L["7,509 条 Soft-BT 训练边"]
-    L --> M["Qwen3.5-4B LoRA：V1 / V2 / V3"]
-    C --> N["Validation 中独立选择 500 题、构造 2,000 边"]
-    N --> O["相同 teacher 级联标注，保留 1,891 边"]
-    O --> P["逐 checkpoint 独立验证"]
-    M --> P
-    P --> Q["选择 V1 checkpoint-epoch-3-step-1176"]
-    Q --> R["新题独立输出 raw scalar s(q)"]
-    R --> S["冻结参考池经验 CDF"]
-    S --> T["百分位分数与五档难度"]
+flowchart LR
+    A["1. 准备可信题目\n只保留题目本身的信息"] --> B["2. 建立相对难度共识\n让 teacher 回答谁更难"]
+    B --> C["3. 训练可泛化的学生模型\n把比较关系压缩为单题标量"]
+    C --> D["4. 转换为业务结果\n稳定输出分数、档位与解释"]
+
+    A --- A1["解决：旧绝对标签无效\n题目重复与泄漏"]
+    B --- B1["解决：绝对分档边界模糊\n模型回答受题目位置影响"]
+    C --- C1["解决：新题不能逐对比较\n辅助任务可能抢占主任务"]
+    D --- D1["解决：相对排序如何变成\n跨批次可用的五档"]
 ```
+
+四块之间传递的都是版本化数据或模型产物；线上新题只进入第 4 块，不会在线请求 teacher。
+
+### 2.1 数据准备与清洗：先消除“题目以外的答案”
+
+```mermaid
+flowchart LR
+    A["原始题目"] --> B["统一成可读文本\n题干、选项、解析、小题"]
+    B --> C["去除污染\n空题、重复题、难度标签泄漏"]
+    C --> D["按题组隔离切分\n避免同题变体跨集合"]
+    D --> E["可追溯的题目池"]
+```
+
+策略重点是只让模型看到学生解题时可用的信息。`difficulty`、`raw_difficulty` 和旧五档
+teacher 标签都不作为文本、选题依据或 pair 监督；图片不上传，只保留图片风险诊断 metadata。
+
+### 2.2 相对比较与软标签：不强迫 teacher 给绝对档位
+
+```mermaid
+flowchart LR
+    A["把题目连成比较图\n每题既有局部近邻，也有全局连接"] --> B["teacher 多次比较\n同时交换 A/B 的位置"]
+    B --> C{"结论是否稳定？"}
+    C -- "稳定、明确" --> D["直接采用\n低成本判断"]
+    C -- "犹豫或位置敏感" --> E["升级复判\n给难例更多推理预算"]
+    D --> F["聚合成软偏好概率\n并记录可靠性"]
+    E --> F
+    F --> G["高位置敏感样本隔离\n避免把偏见教给学生模型"]
+```
+
+这里过滤“位置敏感边”不是为了凑一个更干净的数字：如果交换题目顺序就改变“谁更难”的
+判断，标签很可能混入了先后位置偏见。把它直接用于训练会让学生学习到不稳定的规则，因此
+隔离；轻度不稳定的边则降低训练权重，而不是武断删除。
+
+### 2.3 模型与训练：学习单题难度函数，而非 pair 分类器
+
+```mermaid
+flowchart LR
+    A["可信的相对比较数据"] --> B["共享 Qwen + LoRA scorer"]
+    B --> C["每道题一个连续标量 s(q)"]
+    C --> D["两题相减\n得到谁更难的概率"]
+    D --> E["用独立比较图选择 checkpoint"]
+    B -. "可选辅助训练" .-> F["十个过程特征头\n帮助理解题目结构"]
+    F -. "只辅助表征，不改最终结果" .-> C
+```
+
+训练策略的核心是主任务始终为 Soft Bradley--Terry 排序。十个辅助头只帮助模型辨认题目的
+解题结构；通过 V1、V2、V3 对照和独立验证来控制负迁移，不允许在推理期用“步骤多就升档”
+这样的硬规则覆盖标量结果。
+
+### 2.4 业务部署：把相对标量翻译为稳定的档位语言
+
+```mermaid
+flowchart LR
+    A["新题"] --> B["Qwen backbone + LoRA\n外置难度任务头"]
+    B --> C["连续难度标量 s(q)"]
+    C --> D["与冻结参考题库比较位置"]
+    D --> E["0-100 相对难度分"]
+    E --> F["固定阈值分档"]
+    F --> G["五档难度 + 十维解释"]
+```
+
+这里的五档是固定参考池下的业务分段，不能为每个线上批次重新按百分位切分；否则“基础题”
+只表示当前批次的相对位置，失去跨批次稳定性。
 
 ## 3. 原始题目准备
 
@@ -176,9 +233,9 @@ seed: 42
 
 平均度数满足：
 
-\[
+$$
 \bar d=\frac{2E}{N}=\frac{2\times 8000}{2000}=8
-\]
+$$
 
 平均每道题参与约 8 次比较。单连通约束使所有题目的相对标量处于同一个可比较坐标系中；
 如果图被分成多个互不相连的分量，各分量之间的整体平移无法由 Bradley–Terry 数据确定。
@@ -290,24 +347,24 @@ thinking_1024:
 
 对每个方向使用 Jeffreys 平滑：
 
-\[
+$$
 p_d=\frac{w_d+0.5}{n_d+1}
-\]
+$$
 
-其中 \(w_d\) 为该方向上“原始 question A 更难”的票数，\(n_d\) 为有效票数。
+其中 $w_d$ 为该方向上“原始 question A 更难”的票数，$n_d$ 为有效票数。
 
 最终 soft target 为：
 
-\[
+$$
 y_{AB}=\frac{p_{\text{forward}}+p_{\text{backward}}}{2}
-\]
+$$
 
 位置偏差定义为：
 
-\[
+$$
 \Delta_{\text{position}}
 =|p_{\text{forward}}-p_{\text{backward}}|
-\]
+$$
 
 ### 6.2 可靠性权重
 
@@ -391,7 +448,7 @@ degree:
 | `pair_id` | 稳定题对 ID |
 | `question_a_id`, `question_b_id` | 两道题的稳定 ID |
 | `question_a_text`, `question_b_text` | 统一渲染后的纯文本 |
-| `soft_target` | Teacher 聚合得到的 \(P(A>B)\) |
+| `soft_target` | Teacher 聚合得到的 $P(A>B)$ |
 | `sample_weight` | 由正反序稳定性得到的主损失权重 |
 | `vote_stats` | 正反序票数、平滑概率、位置偏差 |
 | `reliability` | stable / order_sensitive 及处理动作 |
@@ -435,9 +492,9 @@ multi_label_heads: 0
 
 46 个 logits 的来源为：
 
-\[
+$$
 9+4+4+4+3+3+4+3+4+8=46
-\]
+$$
 
 `problem_structure` 当前也是九选一，不是多标签。比如一道题同时涉及“电路”和“图表”，
 teacher 仍需选择最能代表核心解题任务的一类。物理知识领域标签可以作为 metadata 保留，
@@ -472,13 +529,12 @@ teacher 仍需选择最能代表核心解题任务的一类。物理知识领域
 | 1-2步 | 一次判断或一两个直接关系即可完成 |
 | 3-5步 | 需要短推理链或若干相互衔接的计算 |
 | 6-8步 | 存在较长且连续的建模、推理或计算过程 |
-| 9-12步 | 需要较长的连续推理链、多个相互衔接的阶段 |
-| 12步以上 | 需要极长推理链、复杂多问递进或多阶段综合建模 |
+| 9步以上 | 需要很长的连续推理链、多个阶段或多问递进 |
 
-> 口径修订：历史 V3 8000-pair 实验曾将“9-12步”和“12步以上”合并为“9步以上”，
-> 因而本报告后文的既有 V3 指标仍对应四档旧 checkpoint。当前数据与代码已经恢复 frozen18
-> 的五档原始口径；新数据必须从 `teacher_features_legacy18.step_count` 重新生成，不能根据
-> 已合并的“9步以上”反推两个高档位，也不能从旧四档 checkpoint 直接续训。
+旧 frozen18 中的“9-12步”和“12步以上”已合并为“9步以上”，避免最高两档样本过少。
+这项合并在生成 curated 数据时已经完成：`prepare_teacher_data.py` 将原始
+`teacher_features_legacy18.step_count` 规范化后写入 `teacher_features.step_count`；
+旧字段仍保留原始值仅用于数据追溯，V3 模型实际训练只接受四类。
 
 #### 3. `calculation_complexity`：计算链复杂度
 
@@ -586,7 +642,7 @@ teacher 仍需选择最能代表核心解题任务的一类。物理知识领域
 ```text
 shared question representation h
 ├── problem_structure: Linear(H, 9)
-├── step_count: Linear(H, 5)
+├── step_count: Linear(H, 4)
 ├── calculation_complexity: Linear(H, 4)
 ├── reasoning_chain: Linear(H, 4)
 ├── knowledge_count: Linear(H, 3)
@@ -603,7 +659,7 @@ shared question representation h
 2. 在推理时提供可解释标签；
 3. 做数据覆盖、类别偏置和错误切片分析。
 
-它们不用于外部硬规则修正最终难度。模型预测“9-12步”或“12步以上”不等于代码自动将题目升档；
+它们不用于外部硬规则修正最终难度。模型预测“9步以上”不等于代码自动将题目升档；
 最终难度仍由 Bradley–Terry 标量头决定。
 
 ## 8. 学生模型结构
@@ -636,7 +692,7 @@ Question B → shared scorer → s(B)
 | Backbone | Qwen3.5-4B + LoRA | Qwen3.5-4B + LoRA，保持不变 |
 | 文本表示 | 最后一个非 padding token | 保持不变 |
 | 表示后处理 | LayerNorm + Dropout | 保持不变 |
-| 难度头 | `Linear(H, 5)` 五档 logits | `Linear(H, 1)` 连续标量 \(s(q)\) |
+| 难度头 | `Linear(H, 5)` 五档 logits | `Linear(H, 1)` 连续标量 $s(q)$ |
 | 训练输入 | 单题 | 成对输入 A、B，但共享同一个 scorer |
 | 主监督 | 绝对五档标签 | Teacher soft pair preference |
 | 主损失 | 五分类 CE/序数损失 | Soft Bradley–Terry BCE |
@@ -662,21 +718,43 @@ main_head:
   output: scalar_s_q
 ```
 
+训练时的模型连接关系如下。A、B 没有各自独立的难度头；它们经过同一个参数共享的 scorer，
+这是 Bradley--Terry 反对称比较关系能够成立的结构基础。
+
+```mermaid
+flowchart TB
+    QA["题目 A 文本"] --> TA["Tokenizer"] --> BA["Qwen3.5-4B + LoRA"] --> PA["last non-padding token"] --> RA["LayerNorm + Dropout"]
+    QB["题目 B 文本"] --> TB["Tokenizer"] --> BB["同一 Qwen3.5-4B + LoRA"] --> PB["last non-padding token"] --> RB["同一 LayerNorm + Dropout"]
+    RA --> SA["Linear(H,1): s(A)"]
+    RB --> SB["同一 Linear(H,1): s(B)"]
+    SA --> DIFF["s(A)-s(B)"]
+    SB --> DIFF
+    DIFF --> BT["Soft Bradley--Terry BCE"]
+    RA --> AUXA["可选 Aux10: 46 logits"]
+    RB --> AUXB["可选 Aux10: 46 logits"]
+    AUXA --> CE["10 个 CrossEntropy\n归一化后取均值"]
+    AUXB --> CE
+```
+
+`Aux10: 46 logits` 的确切构成是 `9 + 4 + 4 + 4 + 3 + 3 + 4 + 3 + 4 + 8`，分别对应下面十个
+头的候选类别数；第二项是 V3 8000-pair 实际使用的四档 `step_count`。后续若切换回 frozen18
+五档口径，该头会变为 `Linear(H, 5)`、总数变为 47，但它不是本报告中 V3 checkpoint 的结构。
+
 题目文本直接送入 tokenizer 和 backbone，不使用 teacher 的比较 Prompt。模型取最后一个
 非 padding token 的 hidden state，经过 LayerNorm 和 Dropout 后，由线性头输出单题标量
-\(s(q)\)。
+$s(q)$。
 
 训练一个 pair 时，将 A、B 两道题拼成一个 batch，各自经过同一个 scorer：
 
-\[
+$$
 z_{AB}=s(A)-s(B),\qquad \hat p_{AB}=\sigma(z_{AB})
-\]
+$$
 
 因此模型从结构上保证了反对称性：
 
-\[
+$$
 P(A>B)=1-P(B>A)
-\]
+$$
 
 V2/V3 在同一题目表示上增加十个独立分类头。辅助头只用于联合表征学习和解释，不参与
 外部硬规则升降档。
@@ -702,24 +780,24 @@ V3 是在发现 V2 存在轻微负迁移后追加的单变量对照实验。除�
 
 主任务使用带 sample weight 的 soft binary cross-entropy：
 
-\[
+$$
 \mathcal L_{\text{BT}}
 =-\frac{\sum_i w_i[y_i\log\hat p_i+(1-y_i)\log(1-\hat p_i)]}
 {\sum_i w_i}
-\]
+$$
 
-同时加入很小的标量正则，抑制全部 \(s(q)\) 无限制增大：
+同时加入很小的标量正则，抑制全部 $s(q)$ 无限制增大：
 
-\[
+$$
 \mathcal L_{\text{score-reg}}
 =\frac{1}{2}\left(\mathbb E[s(A)^2]+\mathbb E[s(B)^2]\right)
-\]
+$$
 
 ### 9.2 辅助损失
 
 每个辅助头使用交叉熵，并做以下处理：
 
-1. 每头损失除以 \(\log(\text{类别数})\)，避免类别多的头天然占据更大损失；
+1. 每头损失除以 $\log(\text{类别数})$，避免类别多的头天然占据更大损失；
 2. 十个头取平均；
 3. 类别权重采用 inverse-square-root frequency，并裁剪到 `[0.5, 2.0]`；
 4. 单题辅助权重为 `feature_quality / question_degree`，避免高连接度题重复主导辅助任务；
@@ -727,12 +805,12 @@ V3 是在发现 V2 存在轻微负迁移后追加的单变量对照实验。除�
 
 总损失为：
 
-\[
+$$
 \mathcal L=
 \mathcal L_{\text{BT}}
 +10^{-4}\mathcal L_{\text{score-reg}}
 +\lambda_{\text{aux}}(t)\mathcal L_{\text{aux}}
-\]
+$$
 
 ### 9.3 训练配置
 
@@ -802,10 +880,10 @@ Validation 与 Train 的 `question_id` 交集为 0。Test/OOT 没有参与 check
 | 指标 | 含义 | 趋势 |
 |---|---|---|
 | Soft Pairwise Log Loss | 对 teacher soft target 的概率交叉熵，既惩罚方向错误也惩罚错误置信度；主选型指标 | 越低越好 |
-| Brier Score | \((\hat p-y)^2\) 的均值，衡量概率误差 | 越低越好 |
+| Brier Score | $(\hat p-y)^2$ 的均值，衡量概率误差 | 越低越好 |
 | Pairwise Accuracy | 对非 0.5 target，只判断预测方向是否正确 | 越高越好 |
 | Pairwise AUC | 区分 A 更难与 B 更难的排序能力，对阈值不敏感 | 越高越好 |
-| Decisive Accuracy | 只统计 \(|y-0.5|\ge 0.2\) 的明确 pair | 越高越好 |
+| Decisive Accuracy | 只统计 $|y-0.5|\ge 0.2$ 的明确 pair | 越高越好 |
 | Auxiliary Macro F1 | 每个辅助类别等权，关注少数类 | 越高越好 |
 | Auxiliary Balanced Accuracy | 各类别召回率平均 | 越高越好 |
 
@@ -872,7 +950,7 @@ Macro F1，说明模型仍偏向多数类别。辅助指标当前按 pair side �
 
 ### 13.1 单题推理不需要临时组 Pair
 
-训练时使用 pair，只是为了构造监督信号。模型本身学习的是共享函数 \(s(q)\)，因此新题
+训练时使用 pair，只是为了构造监督信号。模型本身学习的是共享函数 $s(q)$，因此新题
 推理过程为：
 
 1. 使用与训练相同的题目渲染规则生成纯文本；
@@ -883,12 +961,12 @@ Macro F1，说明模型仍偏向多数类别。辅助指标当前按 pair side �
 
 如果需要比较两道新题，可以直接计算：
 
-\[
+$$
 P(A>B)=\sigma(s(A)-s(B))
-\]
+$$
 
-如果需要给很多题排序，只需分别计算一次 \(s(q)\) 后排序，计算量是 \(O(N)\)，不需要
-构造 \(O(N^2)\) 个推理 pair。
+如果需要给很多题排序，只需分别计算一次 $s(q)$ 后排序，计算量是 $O(N)$，不需要
+构造 $O(N^2)$ 个推理 pair。
 
 ### 13.2 Raw Score 的含义
 
@@ -915,14 +993,14 @@ test_used: false
 
 用最终 V1 checkpoint 对参考池逐题打分，冻结其经验 CDF。对任意新题：
 
-\[
+$$
 \text{difficulty\_percentile}
 =\frac{\#\{s_{\text{ref}}\le s(q)\}}{N_{\text{ref}}}
-\]
+$$
 
-\[
+$$
 \text{difficulty\_score}=100\times\text{difficulty\_percentile}
-\]
+$$
 
 预设五档参考分布：
 

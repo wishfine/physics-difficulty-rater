@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Audit ten-dimensional auxiliary labels attached to pairwise records.
+"""Audit versioned auxiliary labels attached to pairwise records.
 
 The report deliberately distinguishes pair-side counts from unique-question
 counts.  Pair-side counts over-weight questions with higher graph degree and
