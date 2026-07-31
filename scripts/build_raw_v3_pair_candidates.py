@@ -17,15 +17,31 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from physics_difficulty.data.text_only import normalize_for_dedup
+from physics_difficulty.pairwise.feature_coverage import (
+    feature_coverage_report,
+    feature_hamming_distance,
+    pair_feature_coverage_report,
+    select_feature_balanced_ids,
+    validate_feature_map,
+)
 from physics_difficulty.pairwise.metrics import graph_metrics
 
 
-PAIR_SOURCE_WEIGHTS = {
+TEXT_ONLY_PAIR_SOURCE_WEIGHTS = {
     "lexical_near": 0.30,
     "structure_matched": 0.30,
     "random_global": 0.25,
     "graph_bridge": 0.05,
     "low_degree_repair": 0.10,
+}
+FEATURE_AWARE_PAIR_SOURCE_WEIGHTS = {
+    "feature_near": 0.30,
+    "feature_contrast": 0.25,
+    "lexical_near": 0.10,
+    "structure_matched": 0.10,
+    "random_global": 0.15,
+    "graph_bridge": 0.05,
+    "low_degree_repair": 0.05,
 }
 FORBIDDEN_KEYS = {
     "difficulty",
@@ -139,10 +155,10 @@ def structure_signature(row: Dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def weighted_choice(rng: random.Random) -> str:
-    point = rng.random() * sum(PAIR_SOURCE_WEIGHTS.values())
+def weighted_choice(rng: random.Random, weights: dict[str, float]) -> str:
+    point = rng.random() * sum(weights.values())
     cumulative = 0.0
-    for name, weight in PAIR_SOURCE_WEIGHTS.items():
+    for name, weight in weights.items():
         cumulative += weight
         if point <= cumulative:
             return name
@@ -157,6 +173,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(parents=[bootstrap])
     parser.set_defaults(**defaults)
     parser.add_argument("--questions", required=True)
+    parser.add_argument(
+        "--features-file",
+        help="Curated feature JSONL keyed by id; only teacher_features is read.",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--selected-questions-output", required=True)
     parser.add_argument("--manifest", required=True)
@@ -164,6 +184,12 @@ def main() -> None:
     parser.add_argument("--minimum-degree", type=int, default=4)
     parser.add_argument("--maximum-degree", type=int, default=12)
     parser.add_argument("--max-questions", type=int)
+    parser.add_argument(
+        "--maximum-feature-jsd",
+        type=float,
+        default=0.05,
+        help="Maximum allowed marginal Jensen-Shannon divergence after feature-aware selection.",
+    )
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
@@ -181,10 +207,50 @@ def main() -> None:
             raise ValueError(f"question {index} contains forbidden historical label fields: {paths}")
 
     rows.sort(key=lambda row: stable_rank(args.seed, str(row["id"])))
+    feature_map: dict[str, dict[str, str]] | None = None
+    pool_feature_map: dict[str, dict[str, str]] | None = None
+    feature_coverage: dict[str, Any] | None = None
+    if args.features_file:
+        pool_ids = [str(row["id"]) for row in rows]
+        pool_feature_map = validate_feature_map(
+            load_jsonl(Path(args.features_file)),
+            allowed_question_ids=pool_ids,
+        )
     if args.max_questions is not None:
         if args.max_questions < 2:
             raise ValueError("max-questions must be at least two")
-        rows = rows[:args.max_questions]
+        if pool_feature_map is not None:
+            selected_ids = set(
+                select_feature_balanced_ids(
+                    [str(row["id"]) for row in rows],
+                    pool_feature_map,
+                    target_count=args.max_questions,
+                    seed=args.seed,
+                )
+            )
+            rows = [row for row in rows if str(row["id"]) in selected_ids]
+        else:
+            rows = rows[:args.max_questions]
+    if pool_feature_map is not None:
+        feature_map = {
+            str(row["id"]): pool_feature_map[str(row["id"])] for row in rows
+        }
+        feature_coverage = feature_coverage_report(
+            pool_feature_map, feature_map
+        )
+        if feature_coverage["zero_covered_source_categories"]:
+            raise ValueError(
+                "feature-balanced selection left one or more source auxiliary categories uncovered"
+            )
+        if (
+            feature_coverage["maximum_marginal_jensen_shannon_divergence"]
+            > args.maximum_feature_jsd
+        ):
+            raise ValueError(
+                "feature-balanced selection exceeds maximum marginal Jensen-Shannon divergence: "
+                f"{feature_coverage['maximum_marginal_jensen_shannon_divergence']:.6f} "
+                f"> {args.maximum_feature_jsd:.6f}"
+            )
     count = len(rows)
     minimum_required = max(count - 1, (count * args.minimum_degree + 1) // 2)
     maximum_allowed = min(count * (count - 1) // 2, count * args.maximum_degree // 2)
@@ -196,6 +262,11 @@ def main() -> None:
         raise ValueError("invalid degree constraints")
 
     rng = random.Random(args.seed)
+    pair_source_weights = (
+        FEATURE_AWARE_PAIR_SOURCE_WEIGHTS
+        if feature_map is not None
+        else TEXT_ONLY_PAIR_SOURCE_WEIGHTS
+    )
     ids = [str(row["id"]) for row in rows]
     by_id = {str(row["id"]): row for row in rows}
     fingerprints = {question_id: simhash64(by_id[question_id]["text"]) for question_id in ids}
@@ -216,6 +287,11 @@ def main() -> None:
         signature = structure_signature(by_id[question_id])
         structures[signature].append(question_id)
         coarse_structures[signature[:2]].append(question_id)
+    feature_signatures: dict[tuple[str, ...], list[str]] = defaultdict(list)
+    if feature_map is not None:
+        for question_id in ids:
+            signature = tuple(feature_map[question_id].values())
+            feature_signatures[signature].append(question_id)
 
     existing: set[tuple[str, str]] = set()
     degrees: Counter[str] = Counter()
@@ -232,7 +308,41 @@ def main() -> None:
         ]
 
     def choose_partner(left_id: str, requested_source: str) -> tuple[str | None, str]:
-        if requested_source == "lexical_near":
+        if requested_source in {"feature_near", "feature_contrast"}:
+            if feature_map is None:
+                raise RuntimeError("feature pair source requested without --features-file")
+            if requested_source == "feature_near":
+                signature = tuple(feature_map[left_id].values())
+                candidates = eligible(left_id, feature_signatures[signature])
+                if not candidates:
+                    candidates = eligible(
+                        left_id, rng.sample(ids, min(512, len(ids)))
+                    )
+                candidates.sort(
+                    key=lambda value: (
+                        feature_hamming_distance(
+                            feature_map[left_id], feature_map[value]
+                        ),
+                        degrees[value],
+                        stable_rank(args.seed, value),
+                    )
+                )
+            else:
+                candidates = eligible(
+                    left_id, rng.sample(ids, min(512, len(ids)))
+                )
+                candidates.sort(
+                    key=lambda value: (
+                        -feature_hamming_distance(
+                            feature_map[left_id], feature_map[value]
+                        ),
+                        degrees[value],
+                        stable_rank(args.seed, value),
+                    )
+                )
+            if candidates:
+                return rng.choice(candidates[: min(8, len(candidates))]), requested_source
+        elif requested_source == "lexical_near":
             candidates = eligible(left_id, lexical_candidates[left_id])
             if not candidates:
                 # Sparse LSH buckets must not silently turn a requested near
@@ -311,6 +421,19 @@ def main() -> None:
                     "subquestion_bucket_b": right_signature[1],
                     "has_image_a": bool((left.get("diagnostics") or {}).get("has_image")),
                     "has_image_b": bool((right.get("diagnostics") or {}).get("has_image")),
+                    **(
+                        {
+                            "feature_hamming_distance": feature_hamming_distance(
+                                feature_map[left_id], feature_map[right_id]
+                            ),
+                            "feature_match_count": 10
+                            - feature_hamming_distance(
+                                feature_map[left_id], feature_map[right_id]
+                            ),
+                        }
+                        if feature_map is not None
+                        else {}
+                    ),
                 },
             }
         )
@@ -326,7 +449,7 @@ def main() -> None:
         candidates = [question_id for question_id in ids if degrees[question_id] < args.minimum_degree]
         candidates.sort(key=lambda value: (degrees[value], stable_rank(args.seed + attempts, value)))
         left_id = candidates[0]
-        source = weighted_choice(rng)
+        source = weighted_choice(rng, pair_source_weights)
         if not add_pair(left_id, source) and not add_pair(left_id, "low_degree_repair"):
             raise RuntimeError(f"unable to add coverage edge for {left_id}")
 
@@ -337,7 +460,7 @@ def main() -> None:
         if attempts > args.target_pairs * 50:
             raise RuntimeError("unable to satisfy pair budget within degree constraints")
         remaining = args.target_pairs - len(pairs)
-        source = "graph_bridge" if union_find.components > 1 and remaining <= union_find.components - 1 else weighted_choice(rng)
+        source = "graph_bridge" if union_find.components > 1 and remaining <= union_find.components - 1 else weighted_choice(rng, pair_source_weights)
         candidates = [question_id for question_id in ids if degrees[question_id] < args.maximum_degree]
         if source == "graph_bridge":
             candidates = [question_id for question_id in candidates if union_find.size[union_find.find(question_id)] < count]
@@ -376,16 +499,30 @@ def main() -> None:
         "selected_questions_output": str(selected_output.resolve()),
         "split": next(iter(split_values)),
         "seed": args.seed,
-        "selection_method": "lowest sha256(seed, question_id)",
+        "selection_method": (
+            "frozen10 marginal coverage with deterministic deficit repair"
+            if feature_map is not None
+            else "lowest sha256(seed, question_id)"
+        ),
         "question_count": count,
         "requested_pairs": args.target_pairs,
         "created_pairs": len(pairs),
         "minimum_degree_requested": args.minimum_degree,
         "maximum_degree_requested": args.maximum_degree,
-        "source_target_weights": PAIR_SOURCE_WEIGHTS,
+        "source_target_weights": pair_source_weights,
         "source_counts": dict(source_counts),
         "mean_lexical_jaccard_by_source": mean_similarities,
+        "auxiliary_features_used_for_sampling": feature_map is not None,
+        "features_file": str(Path(args.features_file).resolve()) if args.features_file else None,
+        "feature_coverage": feature_coverage,
+        "maximum_feature_jsd_allowed": args.maximum_feature_jsd,
+        "pair_feature_coverage": (
+            pair_feature_coverage_report(feature_map, pairs)
+            if feature_map is not None
+            else None
+        ),
         "raw_difficulty_used": False,
+        "absolute_difficulty_labels_used": False,
         "old_teacher_labels_used": False,
         "graph": graph,
         "warnings": [],

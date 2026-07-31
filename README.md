@@ -182,6 +182,56 @@ The append-only [experiment log](docs/experiment_log.md) records data versions,
 run parameters, failures, key teacher/student metrics, artifact locations, and
 the exact information to copy from the server for future updates.
 
+### Feature-aware 10k-question / 40k-pair expansion
+
+The refreshed 58,962-record teacher export is used in two strictly separated
+ways. `prepare_raw_v3_questions.py` produces label-free train/validation/test
+question files. The curated frozen18 file is passed separately with
+`--features-file`; pair construction reads only `id + teacher_features`, never
+`difficulty`, `raw_difficulty`, or either absolute teacher-level field.
+
+```bash
+PAIR_ROOT=/data/$USER/physics-difficulty-runtime/pairwise_v4
+CURATED=/data/$USER/physics-difficulty-runtime/rater-data/curated/physics_teacher_v2_frozen18_58977.jsonl
+
+python scripts/build_raw_v3_pair_candidates.py \
+  --config configs/pair_sampling_v4_feature_aware_10k_40k.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --features-file "$CURATED" \
+  --output "$PAIR_ROOT/train_10k_40k/candidates.jsonl" \
+  --selected-questions-output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  --manifest "$PAIR_ROOT/train_10k_40k/candidates.manifest.json"
+```
+
+The builder protects every observed frozen-ten category, limits the maximum
+marginal Jensen--Shannon divergence to `0.05`, mixes feature-near and
+feature-contrast edges with lexical, structure, global, bridge, and degree
+repair edges, and reports per-category endpoint frequency and node degree.
+The selected question and candidate-pair files remain free of auxiliary labels.
+
+After teacher labeling and finalization, audit the comparison data with a
+standalone scalar Bradley--Terry model. This audit does not load Qwen, question
+text, or auxiliary features.
+
+```bash
+BT_AUDIT="$PAIR_ROOT/train_10k_40k/offline_bt_audit"
+mkdir -p "$BT_AUDIT"
+
+python scripts/audit_pairwise_with_bt.py \
+  --input "$PAIR_ROOT/train_10k_40k/final/train_pairs.jsonl" \
+  --report "$BT_AUDIT/report.json" \
+  --scores-output "$BT_AUDIT/question_scores.jsonl" \
+  --residuals-output "$BT_AUDIT/pair_residuals.jsonl" \
+  --folds 5 \
+  --bootstrap-runs 20 \
+  --seed 42
+```
+
+The primary result is held-out soft pairwise log loss from a
+connectivity-preserving edge split. The report also includes the constant
+probability baseline, Brier score, direction accuracy/AUC, severe residual
+rate, diagonal Fisher score uncertainty, and bootstrap ranking stability.
+
 ### vLLM parity experiment for trained pairwise checkpoints
 
 The trained checkpoint is not a standard Hugging Face sequence-classification

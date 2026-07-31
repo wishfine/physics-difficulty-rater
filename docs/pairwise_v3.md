@@ -524,3 +524,77 @@ anchor calibration 对照实验：用锚点分数拟合四个有教育语义的�
    checkpoint 和阈值文件，禁止静默覆盖。
 5. 主模型选择只看 validation soft log loss；test 和 1,049 条无训练重叠 gold 只做最终
    报告。gold 如需评五档，必须有可信标签且不能使用其中 16 条训练重叠记录。
+
+## 12. 58k 刷新数据的 10k 题 / 40k pair 扩展
+
+刷新后的教师文件规范化后有 58,962 条不同文本记录。训练图第一阶段不把全部题目
+一次性构图，而是在 train split 中选择 10,000 道题、构建 40,000 条候选边，平均度数
+为 8。绝对 `difficulty`、`raw_difficulty`、`teacher_difficulty_id` 和
+`teacher_difficulty_level` 均不参与选题或构边。
+
+冻结十维通过独立 `--features-file` 输入，只用于两个地方：
+
+1. 选择 10,000 个节点时尽量保持十个特征各自的边际分布，并优先保护稀有类别；
+2. 构边时同时生成 feature-near 和 feature-contrast pair。
+
+不按十维联合笛卡尔积强行分层，因为联合组合过于稀疏。构图 manifest 必须满足：
+
+```yaml
+feature_coverage:
+  zero_covered_source_categories: 0
+  maximum_marginal_jensen_shannon_divergence: "<= 0.05"
+pair_feature_coverage:
+  report:
+    - feature_hamming_distance_distribution
+    - category_question_count
+    - category_endpoint_occurrences
+    - category_minimum_mean_maximum_degree
+```
+
+候选边来源固定为：
+
+```yaml
+feature_near: 0.30
+feature_contrast: 0.25
+lexical_near: 0.10
+structure_matched: 0.10
+random_global: 0.15
+graph_bridge: 0.05
+low_degree_repair: 0.05
+```
+
+十维字段不写入送给教师的候选 pair；pair metadata 只保留
+`feature_hamming_distance` 和 `feature_match_count` 等聚合诊断值。
+
+## 13. 离线 Bradley--Terry pair 数据审计
+
+教师打标并清洗后，先运行 `scripts/audit_pairwise_with_bt.py`。该脚本不加载题目文本、
+Qwen 或十维特征，只为每个 question ID 拟合一个标量：
+
+```text
+P(A > B) = sigmoid(s_A - s_B)
+```
+
+交叉验证先从完整图保留一棵连通骨架，再把其余冗余边分为五折。这样每一折的拟合图都
+包含全部节点并保持连通，held-out 指标衡量其他边学到的全局分数能否解释未参与拟合的
+比较边。
+
+主指标为：
+
+```yaml
+cross_validation:
+  heldout_metrics:
+    soft_pairwise_log_loss: primary
+    brier_score: probability_error
+    pairwise_accuracy: hard_direction
+    decisive_pairwise_accuracy: clear_pair_direction
+    pairwise_auc: direction_ranking
+  constant_baseline_metrics: same_metrics_with_train_mean_probability
+```
+
+`pair_residuals.jsonl` 按 `abs(teacher_soft_target - bt_probability)` 从大到小排列，用于
+重新打标或人工复核。`question_scores.jsonl` 保存零均值 BT 分数和基于观测 Fisher
+对角项的近似标准误。bootstrap 报告 Spearman 排名相关性及最难/最易 10% 的重叠率。
+
+这个审计只证明 pair 标签是否能够形成稳定、自洽的一维全局排序，不证明教师判断符合
+真实教研标准，也不替代 question-disjoint 的学生模型 validation。

@@ -1410,3 +1410,33 @@ integrity:
 当前25k源文件曾按无效历史`difficulty`字段等量抽样，因此首版参考池只用于验证工程
 链路和产生固定的实验相对标尺。业务部署前需要换成不依赖该字段、能代表线上题库自然
 分布的固定参考样本，再发布新的`calibration_version`。
+
+## 15. Feature-aware 10k/40k pair 与离线 BT 审计
+
+```yaml
+date: 2026-07-31
+status: CODE_READY_SERVER_RUN_PENDING
+source:
+  curated_records: 58962
+  absolute_difficulty_used_for_pair_sampling: false
+pair_plan:
+  selected_questions: 10000
+  candidate_pairs: 40000
+  target_mean_degree: 8
+  frozen10_used_for:
+    - marginally_balanced_node_selection
+    - rare_category_protection
+    - feature_near_edges
+    - feature_contrast_edges
+  frozen10_not_written_to_teacher_pairs: true
+offline_bt_audit:
+  uses_text: false
+  uses_auxiliary_features: false
+  cross_validation: connectivity_preserving_5_fold_edge_cv
+  bootstrap_runs_default: 20
+  primary_metric: heldout_soft_pairwise_log_loss
+  artifacts:
+    - report.json
+    - question_scores.jsonl
+    - pair_residuals.jsonl
+```
