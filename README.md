@@ -209,6 +209,20 @@ feature-contrast edges with lexical, structure, global, bridge, and degree
 repair edges, and reports per-category endpoint frequency and node degree.
 The selected question and candidate-pair files remain free of auxiliary labels.
 
+The production cascade keeps its safe 8,000-pair default. Set the registered
+override explicitly for this 40,000-pair run:
+
+```bash
+EXPECTED_PAIR_COUNT=40000 nohup bash scripts/server_run_cascade_production.sh \
+  /home/share_ssd_data/nfs-env/llm_models/Qwen/Qwen3-32B \
+  "$PAIR_ROOT/train_10k_40k/candidates.jsonl" \
+  "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  "$PAIR_ROOT/train_10k_40k" \
+  4,5 \
+  6,7 \
+  > "$PAIR_ROOT/train_10k_40k/logs/cascade.log" 2>&1 &
+```
+
 After teacher labeling and finalization, audit the comparison data with a
 standalone scalar Bradley--Terry model. This audit does not load Qwen, question
 text, or auxiliary features.

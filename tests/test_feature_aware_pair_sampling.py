@@ -22,6 +22,13 @@ def feature_row(question_id: str, problem_structure: str) -> dict:
 
 
 class FeatureAwarePairSamplingTests(unittest.TestCase):
+    def test_production_cascade_allows_registered_40k_pair_count_override(self):
+        script = (ROOT / "scripts" / "server_run_cascade_production.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("EXPECTED_PAIR_COUNT=${EXPECTED_PAIR_COUNT:-8000}", script)
+        self.assertIn('if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]', script)
+
     def test_balanced_selection_keeps_rare_auxiliary_category(self):
         feature_rows = [
             feature_row(f"q{index}", "概念判断" if index < 11 else "实验探究")

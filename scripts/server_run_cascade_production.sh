@@ -12,6 +12,7 @@ QUESTIONS_FILE=$3
 OUTPUT_ROOT=$4
 GPU_PAIR_1=${5:-4,5}
 GPU_PAIR_2=${6:-6,7}
+EXPECTED_PAIR_COUNT=${EXPECTED_PAIR_COUNT:-8000}
 PROJECT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 if [[ ! -f "$MODEL_PATH/config.json" ]]; then
@@ -27,8 +28,8 @@ if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]; then
   exit 1
 fi
 PAIR_COUNT=$(grep -cve '^[[:space:]]*$' "$PAIRS_FILE")
-if [[ "$PAIR_COUNT" -ne 8000 ]]; then
-  echo "Production input must contain exactly 8000 pairs, got $PAIR_COUNT" >&2
+if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]; then
+  echo "Production input must contain exactly $EXPECTED_PAIR_COUNT pairs, got $PAIR_COUNT" >&2
   exit 1
 fi
 
@@ -43,7 +44,7 @@ THINKING_0="$OUTPUT_ROOT/thinking_1024/shard-000/raw_votes.jsonl"
 THINKING_1="$OUTPUT_ROOT/thinking_1024/shard-001/raw_votes.jsonl"
 THINKING_MERGED="$OUTPUT_ROOT/thinking_1024/raw_votes.merged.jsonl"
 
-printf '\n[%s] Nonthinking screen: 8000 pairs on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_1" \
+printf '\n[%s] Nonthinking screen: %s pairs on GPUs %s\n' "$(date --iso-8601=seconds)" "$PAIR_COUNT" "$GPU_PAIR_1" \
   >> "$OUTPUT_ROOT/logs/nonthinking.log"
 env CUDA_VISIBLE_DEVICES="$GPU_PAIR_1" python scripts/run_local_pairwise_teacher.py \
   --config configs/qwen3_32b_pairwise_teacher_nonthinking.json \
