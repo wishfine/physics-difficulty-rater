@@ -88,7 +88,10 @@ class RawV3PreparationTests(unittest.TestCase):
             self.assertEqual(reasons["duplicate"], "duplicate_normalized_text")
             self.assertEqual(reasons["empty"], "semantically_empty")
             self.assertEqual(reasons["leak"], "label_leakage")
-            self.assertEqual(manifest["forbidden_source_fields"], ["difficulty"])
+            self.assertEqual(manifest["forbidden_output_label_fields"], [
+                "difficulty", "raw_difficulty", "teacher_difficulty_id",
+                "teacher_difficulty_level", "teacher_features", "teacher_features_legacy18",
+            ])
             self.assertFalse(manifest["raw_difficulty_used"])
             self.assertEqual(manifest["stats"]["source_records"], 34)
             self.assertEqual(manifest["stats"]["accepted"], 31)

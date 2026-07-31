@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare and split the raw 25k physics source without using its labels."""
+"""Prepare and split a raw physics source without using its labels."""
 from __future__ import annotations
 
 import argparse
@@ -24,7 +24,7 @@ from physics_difficulty.data.text_only import (
 )
 
 
-RAW25K_REQUIRED_FIELDS = {
+RAW_REQUIRED_FIELDS = {
     "parent_id",
     "question_id",
     "stem",
@@ -33,7 +33,6 @@ RAW25K_REQUIRED_FIELDS = {
     "sub_questions",
     "stem_pic_url",
     "analysis_pic_url",
-    "difficulty",
 }
 SPLITS = ("train", "validation", "test")
 
@@ -50,16 +49,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_raw25k(record: Dict[str, Any], line_number: int) -> None:
-    missing = RAW25K_REQUIRED_FIELDS - set(record)
+def validate_raw_source(record: Dict[str, Any], line_number: int) -> None:
+    missing = RAW_REQUIRED_FIELDS - set(record)
     if missing:
-        raise ValueError(f"line {line_number}: raw25k input is missing fields {sorted(missing)}")
+        raise ValueError(f"line {line_number}: raw input is missing fields {sorted(missing)}")
     if not str(record.get("question_id") or "").strip():
-        raise ValueError(f"line {line_number}: raw25k question_id is empty")
+        raise ValueError(f"line {line_number}: raw question_id is empty")
     if not str(record.get("parent_id") or "").strip():
-        raise ValueError(f"line {line_number}: raw25k parent_id is empty")
+        raise ValueError(f"line {line_number}: raw parent_id is empty")
     if not isinstance(record.get("sub_questions"), list):
-        raise ValueError(f"line {line_number}: raw25k sub_questions must be a list")
+        raise ValueError(f"line {line_number}: raw sub_questions must be a list")
 
 
 def clean_sections(record: Dict[str, Any]) -> list[Dict[str, Any]]:
@@ -122,6 +121,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--train-ratio", type=float, default=0.8)
     parser.add_argument("--validation-ratio", type=float, default=0.1)
+    parser.add_argument(
+        "--source-description",
+        default="unspecified",
+        help="Immutable human-readable provenance note for this raw source.",
+    )
     parser.add_argument("--allow-label-leakage", action="store_true")
     args = parser.parse_args()
     if not 0 < args.train_ratio < 1 or not 0 < args.validation_ratio < 1:
@@ -144,7 +148,7 @@ def main() -> None:
                 continue
             stats["source_records"] += 1
             record = json.loads(line)
-            validate_raw25k(record, line_number)
+            validate_raw_source(record, line_number)
             question_id = question_identifier(record)
             group_id = question_group_identifier(record, question_id)
             sections = clean_sections(record)
@@ -218,7 +222,7 @@ def main() -> None:
     write_jsonl(output_dir / "quarantine.jsonl", quarantined)
 
     manifest = {
-        "schema_version": "v3_raw25k_preparation_v1",
+        "schema_version": "v3_raw_questions_v1",
         "input": str(source_path.resolve()),
         "input_sha256": sha256_file(source_path),
         "output_dir": str(output_dir.resolve()),
@@ -231,9 +235,16 @@ def main() -> None:
         "split_method": "sha256(seed, question_group_id)",
         "deduplication_key": "sha256(NFKC(normalized rendered text))",
         "images_uploaded": False,
-        "forbidden_source_fields": ["difficulty"],
+        "forbidden_output_label_fields": [
+            "difficulty",
+            "raw_difficulty",
+            "teacher_difficulty_id",
+            "teacher_difficulty_level",
+            "teacher_features",
+            "teacher_features_legacy18",
+        ],
         "raw_difficulty_used": False,
-        "known_sampling_bias": "source file was historically sampled as 5000 records per unusable difficulty value",
+        "source_description": args.source_description,
         "allow_label_leakage": args.allow_label_leakage,
         "stats": dict(stats),
         "outputs": {
