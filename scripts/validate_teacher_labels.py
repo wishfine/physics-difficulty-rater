@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate exports from the frozen physics 18-feature teacher pipeline."""
+"""Validate exports with the physics legacy-18 teacher-feature contract."""
 from __future__ import annotations
 
 import argparse
@@ -28,13 +28,13 @@ def main() -> None:
             errors.append(f"line {line_number}: invalid difficulty_level")
         features = rating.get("features") or {}
         if features.get("problem_structure") not in PROBLEM_STRUCTURE_VALUES:
-            errors.append(f"line {line_number}: invalid frozen problem_structure")
+            errors.append(f"line {line_number}: invalid problem_structure")
         for name in FROZEN_18_FEATURE_NAMES:
             if name not in features:
-                errors.append(f"line {line_number}: missing frozen feature {name}")
+                errors.append(f"line {line_number}: missing legacy-18 feature {name}")
     if errors:
         raise SystemExit("Teacher-label contract failed:\n" + "\n".join(errors[:50]))
-    print(json.dumps({"checked_records": checked, "contract": "teacher_label_v2_frozen18", "status": "PASS"}, ensure_ascii=False))
+    print(json.dumps({"checked_records": checked, "contract": "teacher_label_legacy18", "status": "PASS"}, ensure_ascii=False))
 
 
 if __name__ == "__main__":
