@@ -426,7 +426,7 @@ def main() -> None:
                             "feature_hamming_distance": feature_hamming_distance(
                                 feature_map[left_id], feature_map[right_id]
                             ),
-                            "feature_match_count": 10
+                            "feature_match_count": len(feature_map[left_id])
                             - feature_hamming_distance(
                                 feature_map[left_id], feature_map[right_id]
                             ),

@@ -125,6 +125,11 @@ class FeatureAwarePairSamplingTests(unittest.TestCase):
             self.assertIn("feature_contrast", manifest["source_target_weights"])
             pair = json.loads(output_path.read_text(encoding="utf-8").splitlines()[0])
             self.assertIn("feature_hamming_distance", pair["metadata"])
+            self.assertEqual(
+                pair["metadata"]["feature_match_count"]
+                + pair["metadata"]["feature_hamming_distance"],
+                len(FEATURE_VALUES),
+            )
             selected_text = selected_path.read_text(encoding="utf-8")
             self.assertNotIn("teacher_features", selected_text)
             self.assertNotIn("teacher_difficulty", selected_text)
