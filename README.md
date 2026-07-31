@@ -193,17 +193,36 @@ question files. The curated frozen18 file is passed separately with
 ```bash
 PAIR_ROOT=/data/$USER/physics-difficulty-runtime/pairwise_v4
 CURATED=/data/$USER/physics-difficulty-runtime/rater-data/curated/physics_teacher_v2_frozen18_58977.jsonl
+POOL_SCORES=/path/to/precomputed/train_pool_scores.jsonl
+POOL_SCORES_MANIFEST=/path/to/precomputed/train_pool_scores.manifest.json
+
+python scripts/select_bt_feature_balanced_questions.py \
+  --config configs/question_selection_v4_bt_decile_10k.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --features-file "$CURATED" \
+  --scores "$POOL_SCORES" \
+  --scores-manifest "$POOL_SCORES_MANIFEST" \
+  --output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  --audit-output "$PAIR_ROOT/train_10k_40k/question_selection.private.jsonl" \
+  --manifest "$PAIR_ROOT/train_10k_40k/question_selection.manifest.json"
 
 python scripts/build_raw_v3_pair_candidates.py \
   --config configs/pair_sampling_v4_feature_aware_10k_40k.json \
-  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --questions "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
   --features-file "$CURATED" \
   --output "$PAIR_ROOT/train_10k_40k/candidates.jsonl" \
-  --selected-questions-output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  --selected-questions-output "$PAIR_ROOT/train_10k_40k/pair_graph_questions.jsonl" \
   --manifest "$PAIR_ROOT/train_10k_40k/candidates.manifest.json"
 ```
 
-The builder protects every observed frozen-ten category, limits the maximum
+The CPU-only selector requires an existing single-question score file and its
+hash-bound manifest; it never loads the backbone model. It assigns the train
+pool to ten equal-frequency BT-score bins and selects 1,000 questions from each:
+800 distribution-matched, 100 rare-feature protected, and 100 deterministic
+random exploration records. A private audit file retains scores, bins, and
+features; the teacher-facing question file contains none of them.
+
+The pair builder protects every observed frozen-ten category, limits the maximum
 marginal Jensen--Shannon divergence to `0.05`, mixes feature-near and
 feature-contrast edges with lexical, structure, global, bridge, and degree
 repair edges, and reports per-category endpoint frequency and node degree.

@@ -1,0 +1,9 @@
+{
+  "target_count": 10000,
+  "deciles": 10,
+  "distribution_fraction": 0.8,
+  "rare_fraction": 0.1,
+  "random_fraction": 0.1,
+  "maximum_feature_jsd": 0.05,
+  "seed": 42
+}

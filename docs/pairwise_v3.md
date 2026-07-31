@@ -532,10 +532,22 @@ anchor calibration 对照实验：用锚点分数拟合四个有教育语义的�
 为 8。绝对 `difficulty`、`raw_difficulty`、`teacher_difficulty_id` 和
 `teacher_difficulty_level` 均不参与选题或构边。
 
-冻结十维通过独立 `--features-file` 输入，只用于两个地方：
+选题前先使用已有最佳 BT-only checkpoint 生成 train pool 单题分数。实际选择完全在
+CPU 内存中运行，读取分数文件和其 hash-bound manifest，不加载 Qwen。train pool 按
+分数排名分成十个等频区间，每个区间选择 1,000 道：
 
-1. 选择 10,000 个节点时尽量保持十个特征各自的边际分布，并优先保护稀有类别；
-2. 构边时同时生成 feature-near 和 feature-contrast pair。
+```yaml
+per_bt_decile:
+  distribution_matched: 800
+  rare_feature_protection: 100
+  deterministic_random_exploration: 100
+```
+
+冻结十维通过独立 `--features-file` 输入，用于：
+
+1. 每个 BT 分数区间内尽量保持十个特征各自的边际分布；
+2. 保护稀有特征类别并保留 10% 模型无关的探索样本；
+3. 构边时生成 feature-near 和 feature-contrast pair。
 
 不按十维联合笛卡尔积强行分层，因为联合组合过于稀疏。构图 manifest 必须满足：
 
@@ -565,6 +577,23 @@ low_degree_repair: 0.05
 
 十维字段不写入送给教师的候选 pair；pair metadata 只保留
 `feature_hamming_distance` 和 `feature_match_count` 等聚合诊断值。
+
+CPU 选题命令为：
+
+```bash
+python scripts/select_bt_feature_balanced_questions.py \
+  --config configs/question_selection_v4_bt_decile_10k.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --features-file "$CURATED" \
+  --scores "$POOL_SCORES" \
+  --scores-manifest "$POOL_SCORES_MANIFEST" \
+  --output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  --audit-output "$PAIR_ROOT/train_10k_40k/question_selection.private.jsonl" \
+  --manifest "$PAIR_ROOT/train_10k_40k/question_selection.manifest.json"
+```
+
+如果没有预先生成的 BT score 文件，选题脚本会拒绝运行；不得静默改用 API 五档、
+错误的 `difficulty`，或退化为全随机选择。
 
 ## 13. 离线 Bradley--Terry pair 数据审计
 

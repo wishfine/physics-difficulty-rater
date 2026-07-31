@@ -1423,6 +1423,14 @@ pair_plan:
   selected_questions: 10000
   candidate_pairs: 40000
   target_mean_degree: 8
+  question_selection:
+    execution: cpu_only
+    bt_score_deciles: 10
+    per_decile:
+      distribution_matched: 800
+      rare_feature_protection: 100
+      deterministic_random_exploration: 100
+    requires_hash_bound_precomputed_scores: true
   frozen10_used_for:
     - marginally_balanced_node_selection
     - rare_category_protection
