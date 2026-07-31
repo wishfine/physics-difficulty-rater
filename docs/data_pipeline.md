@@ -202,6 +202,32 @@ python scripts/prepare_teacher_data.py \
   --seed 42
 ```
 
+对于刷新后的大批量教师导出，处理方式完全相同：先生成新的 `curated`
+文件，再运行转换审计。审计不读取原始 `difficulty`，只核对教师最终档位、
+冻结 18 维和派生 10 维，避免历史采样标签混入训练监督。
+
+```bash
+python scripts/prepare_teacher_data.py \
+  --input /path/to/physics_teacher_gpt56_hybrid_single_v1.jsonl \
+  --output data/curated/physics_teacher_v2_frozen18_58977.jsonl \
+  --manifest data/curated/physics_teacher_v2_frozen18_58977.manifest.json \
+  --prompt-version gpt56_hybrid \
+  --postprocess-version v7 \
+  --teacher-model doubao-seed-2.0-lite \
+  --source-dataset-id old25k_plus_new_merged \
+  --label-source api_v7_gpt56_hybrid
+
+python scripts/audit_teacher_feature_conversion.py \
+  --source /path/to/physics_teacher_gpt56_hybrid_single_v1.jsonl \
+  --curated data/curated/physics_teacher_v2_frozen18_58977.jsonl \
+  --report data/curated/physics_teacher_v2_frozen18_58977.conversion_audit.json
+```
+
+审计必须为 `status: PASS`；`frozen18_preserved` 表示原始 18 维未改写，
+`frozen10_exactly_derived` 表示 10 维逐条等于规范转换结果，
+`raw_difficulty_used` 必须为 `false`。没有成功教师输出的记录不要伪造标签，
+保留在错误文件并从本批次 curated 数据排除即可。
+
 本次产物统计：
 
 ```yaml

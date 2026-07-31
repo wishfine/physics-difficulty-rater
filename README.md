@@ -36,6 +36,20 @@ python scripts/split_teacher_data.py --input data/curated/teacher_v2.jsonl --out
 python scripts/oof_audit.py --input data/curated/split_v2/train.jsonl --output data/curated/train_with_oof.jsonl
 ```
 
+For a refreshed large export, audit the 18-to-10 feature conversion after
+`prepare_teacher_data.py`:
+
+```bash
+python scripts/audit_teacher_feature_conversion.py \
+  --source /path/to/teacher_export.jsonl \
+  --curated data/curated/teacher_v2_frozen18.jsonl \
+  --report data/curated/teacher_v2_frozen18.conversion_audit.json
+```
+
+The audit verifies that frozen 18-dimensional teacher features are preserved
+and that the ten-dimensional features are derived exactly. The source
+`difficulty` field is ignored for labels and is never training supervision.
+
 ## Training
 
 ```bash
