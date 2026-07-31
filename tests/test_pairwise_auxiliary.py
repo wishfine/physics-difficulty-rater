@@ -123,6 +123,32 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             report = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(report["question_coverage"], 1.0)
 
+    def test_join_applies_only_valid_step_count_overrides(self):
+        pair = {
+            "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
+            "question_a_text": "题 A", "question_b_text": "题 B", "soft_target": 0.75,
+        }
+        teachers = [
+            {"id": "qa", "teacher_features": features(), "label_quality": {"sample_weight": 1.0}},
+            {"id": "qb", "teacher_features": features(), "label_quality": {"sample_weight": 1.0}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            pairs, teacher = directory / "pairs.jsonl", directory / "teacher.jsonl"
+            overrides, output, manifest = directory / "overrides.jsonl", directory / "joined.jsonl", directory / "manifest.json"
+            pairs.write_text(json.dumps(pair, ensure_ascii=False) + "\n", encoding="utf-8")
+            teacher.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in teachers), encoding="utf-8")
+            overrides.write_text(json.dumps({"question_id": "qa", "step_count": "9步以上"}, ensure_ascii=False) + "\n", encoding="utf-8")
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "attach_pairwise_auxiliary_features.py"),
+                "--pairs", str(pairs), "--features", str(teacher), "--output", str(output),
+                "--manifest", str(manifest), "--step-count-overrides", str(overrides),
+            ], check=True, capture_output=True, text=True)
+            joined = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(joined["auxiliary_features"]["question_a"]["step_count"], "9步以上")
+            report = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(report["step_count_overrides_applied"], 1)
+
     def test_stable_hash_split_does_not_depend_on_teacher_label(self):
         rows = []
         for index in range(20):

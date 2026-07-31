@@ -1,0 +1,16 @@
+{
+  "tensor_parallel_size": 2,
+  "dtype": "bfloat16",
+  "gpu_memory_utilization": 0.82,
+  "max_num_batched_tokens": 4096,
+  "max_num_seqs": 32,
+  "batch_size": 4,
+  "samples_per_question": 3,
+  "temperature": 0.6,
+  "top_p": 0.95,
+  "top_k": 20,
+  "min_p": 0.0,
+  "max_new_tokens": 512,
+  "enable_thinking": true,
+  "seed": 42
+}

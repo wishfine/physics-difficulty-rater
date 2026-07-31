@@ -52,6 +52,7 @@ def main() -> None:
     parser.add_argument("--features", required=True, help="Frozen18 curated JSONL; only id, teacher_features, and label_quality.sample_weight are read")
     parser.add_argument("--output", required=True)
     parser.add_argument("--manifest", required=True)
+    parser.add_argument("--step-count-overrides", help="Optional consensus-only JSONL from aggregate_step_count_rechecks.py")
     parser.add_argument("--minimum-question-coverage", type=float, default=0.95)
     args = parser.parse_args()
     if not 0 <= args.minimum_question_coverage <= 1:
@@ -74,6 +75,21 @@ def main() -> None:
             raise ValueError(f"invalid feature quality for {question_id}: {quality}")
         feature_index[question_id] = (validated_features(row, features_path, line_number), quality)
 
+    step_overrides: dict[str, str] = {}
+    overrides_path = Path(args.step_count_overrides) if args.step_count_overrides else None
+    if overrides_path is not None:
+        for line_number, row in read_jsonl(overrides_path):
+            question_id = str(row.get("question_id") or "").strip()
+            step_count = row.get("step_count")
+            if not question_id or step_count not in FEATURE_TO_ID["step_count"]:
+                raise ValueError(f"invalid step-count override at {overrides_path}:{line_number}")
+            if question_id in step_overrides:
+                raise ValueError(f"duplicate step-count override question id: {question_id}")
+            step_overrides[question_id] = step_count
+    unknown_override_ids = set(step_overrides) - set(feature_index)
+    if unknown_override_ids:
+        raise ValueError(f"step-count overrides reference unknown feature IDs: {len(unknown_override_ids)}")
+
     rows = [row for _, row in read_jsonl(pairs_path)]
     requested_ids = {
         str(row[side])
@@ -89,6 +105,7 @@ def main() -> None:
         )
 
     missing_pair_sides = 0
+    applied_override_ids: set[str] = set()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as target:
         for row in rows:
@@ -102,7 +119,12 @@ def main() -> None:
                     qualities[label] = 0.0
                     missing_pair_sides += 1
                 else:
-                    attached[label], qualities[label] = found
+                    attached_features, qualities[label] = found
+                    attached_features = dict(attached_features)
+                    if question_id in step_overrides:
+                        attached_features["step_count"] = step_overrides[question_id]
+                        applied_override_ids.add(question_id)
+                    attached[label] = attached_features
             result = dict(row)
             result["auxiliary_features"] = attached
             result["auxiliary_feature_quality"] = qualities
@@ -122,7 +144,10 @@ def main() -> None:
         "feature_names": list(FEATURE_TO_ID),
         "join_key": "question_id == curated.id",
         "ignored_absolute_label_fields": ["difficulty", "raw_difficulty", "teacher_difficulty_id", "teacher_difficulty_level"],
-        "input_sha256": {"pairs": sha256(pairs_path), "features": sha256(features_path)},
+        "step_count_overrides": str(overrides_path.resolve()) if overrides_path else None,
+        "step_count_overrides_available": len(step_overrides),
+        "step_count_overrides_applied": len(applied_override_ids),
+        "input_sha256": {"pairs": sha256(pairs_path), "features": sha256(features_path), **({"step_count_overrides": sha256(overrides_path)} if overrides_path else {})},
         "output_sha256": sha256(output_path),
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
