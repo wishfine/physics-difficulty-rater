@@ -39,6 +39,9 @@ def main() -> None:
     parser.add_argument("--postprocess-version", default="v7")
     parser.add_argument("--teacher-model", default="unknown")
     parser.add_argument("--source-dataset-id", default="unknown")
+    parser.add_argument("--label-source", default="api_v7_frozen18")
+    parser.add_argument("--feature-schema-version", default="v2_frozen18")
+    parser.add_argument("--label-schema-version", default="v2_frozen18")
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -85,9 +88,9 @@ def main() -> None:
                 "teacher_features": features,
                 "teacher_features_legacy18": legacy_features,
                 "feature_metadata": {"knowledge_domains": normalize_knowledge_domains(legacy_features)},
-                "label_source": "api_v7_frozen18",
-                "feature_schema_version": "v2_frozen18",
-                "label_schema_version": "v2_frozen18",
+                "label_source": args.label_source,
+                "feature_schema_version": args.feature_schema_version,
+                "label_schema_version": args.label_schema_version,
                 "prompt_version": args.prompt_version,
                 "postprocess_version": args.postprocess_version,
                 "teacher_model": args.teacher_model,
@@ -122,8 +125,15 @@ def main() -> None:
 
     manifest = {
         "input": str(Path(args.input).resolve()), "output": str(output.resolve()), "conflict_output": str(conflict_output.resolve()),
-        "schema_version": "v2_frozen18", "formatter_version": FORMATTER_VERSION, "records": len(accepted), "quarantined_records": len(quarantined),
-        "provenance": {"prompt_version": args.prompt_version, "postprocess_version": args.postprocess_version, "teacher_model": args.teacher_model},
+        "schema_version": args.label_schema_version, "formatter_version": FORMATTER_VERSION, "records": len(accepted), "quarantined_records": len(quarantined),
+        "provenance": {
+            "prompt_version": args.prompt_version,
+            "postprocess_version": args.postprocess_version,
+            "teacher_model": args.teacher_model,
+            "label_source": args.label_source,
+            "feature_schema_version": args.feature_schema_version,
+            "label_schema_version": args.label_schema_version,
+        },
         "stats": dict(stats),
     }
     Path(args.manifest).write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

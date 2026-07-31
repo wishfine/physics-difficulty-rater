@@ -123,6 +123,34 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             report = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(report["question_coverage"], 1.0)
 
+    def test_stable_hash_split_does_not_depend_on_teacher_label(self):
+        rows = []
+        for index in range(20):
+            rows.append({
+                "id": f"q{index}", "parent_id": f"p{index}", "source_dataset_id": "source",
+                "teacher_difficulty_id": index % 5,
+                "teacher_difficulty_level": ["送分题", "基础题", "中等题", "拔高题", "压轴题"][index % 5],
+            })
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            first = directory / "first.jsonl"
+            second = directory / "second.jsonl"
+            first.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+            changed = [{**row, "teacher_difficulty_id": 4 - row["teacher_difficulty_id"], "teacher_difficulty_level": "压轴题"} for row in rows]
+            second.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in changed), encoding="utf-8")
+            outputs = []
+            for index, source in enumerate((first, second)):
+                output = directory / f"split-{index}"
+                subprocess.run([
+                    sys.executable, str(ROOT / "scripts" / "split_teacher_data.py"),
+                    "--input", str(source), "--output-dir", str(output), "--seed", "42", "--method", "stable_hash",
+                ], check=True, capture_output=True, text=True)
+                outputs.append({
+                    name: {json.loads(line)["id"] for line in (output / f"{name}.jsonl").read_text(encoding="utf-8").splitlines()}
+                    for name in ("train", "validation", "test")
+                })
+            self.assertEqual(outputs[0], outputs[1])
+
     @unittest.skipUnless(torch is not None, "PyTorch is not installed in this local test runtime")
     def test_dataset_collates_ten_targets_and_degree_corrected_weights(self):
         rows = []
