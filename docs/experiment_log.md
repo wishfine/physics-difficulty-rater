@@ -1484,3 +1484,36 @@ validation:
     wall_time_seconds: 12.753
     exact_questions_per_bt_decile: 1000
 ```
+
+## 17. V4 10k 选题改用最终教师五档 + Aux11
+
+```yaml
+date: 2026-07-31
+status: CODE_COMPLETE_SERVER_SELECTION_PENDING
+supersedes:
+  - section_15_question_selection_only
+selection:
+  target_questions: 10000
+  difficulty_source: teacher_difficulty_level
+  difficulty_source_meaning: Prompt_plus_postprocess_final_level
+  raw_difficulty_used: false
+  old_BT_full_pool_scoring_required: false
+  level_quota:
+    minimum_per_level_when_available: 1000
+    remaining: proportional_to_source_teacher_level_distribution
+  aux11_category_floor:
+    global_when_available: 20
+    per_teacher_level_when_available: 3
+  remaining_fraction:
+    marginal_distribution_matching: 0.80
+    rare_category_protection: 0.10
+    deterministic_random_exploration: 0.10
+optional_diagnostic:
+  old_BT_score_selected_10k_only: true
+  participates_in_selection: false
+  blocks_teacher_labeling: false
+artifacts:
+  selector: scripts/select_teacher_level_feature_balanced_questions.py
+  config: configs/question_selection_v4_teacher_level_10k.json
+  manifest_schema: teacher_level_aux11_question_selection_v1
+```

@@ -12,12 +12,12 @@ new_experiment:
   candidate_training_pairs: 40000
   target_mean_degree: 8
 status:
-  question_selection_code: READY
+  teacher_level_aux11_question_selection: READY
   feature_aware_pair_builder: READY
   40000_pair_teacher_launcher: READY
-  postlabel_offline_bt_audit: READY
-  full_pool_bt_scores: MISSING
-  prelabel_score_based_pair_audit: READY
+  postlabel_offline_bt_audit: BASELINE_READY_GATES_INCOMPLETE
+  full_pool_bt_scores: NOT_REQUIRED
+  selected_10k_old_BT_audit: OPTIONAL
   expanded_validation_graph: TO_IMPLEMENT
   training: NOT_STARTED
 ```
@@ -66,10 +66,10 @@ V4_target:
 
 ```mermaid
 flowchart TD
-    A["刷新后的 58,962 道规范化题目"] --> B["旧 V1 BT-only 模型逐题打分"]
-    B --> C["训练池按 BT score 分成 10 个等频区间"]
-    C --> D["每区间选择 1,000 题"]
-    D --> E["11 维类别下限 + 边际分布匹配 + 稀有保护 + 随机探索"]
+    A["刷新后的 58,962 道规范化题目"] --> B["读取 Prompt + 后处理最终五档"]
+    B --> C["每档先保底 1,000 题"]
+    C --> D["剩余 5,000 名额按源五档分布分配"]
+    D --> E["档内 Aux11 类别下限 + 分布匹配 + 稀有保护 + 随机探索"]
     E --> F["得到 10,000 道训练节点"]
     F --> G["构造 40,000 条 feature-aware 候选边"]
     G --> H["第一次数据验证：打标前审计"]
@@ -114,132 +114,92 @@ never_use_for_selection_or_pairing:
   - difficulty
   - raw_difficulty
   - teacher_difficulty_id
-  - teacher_difficulty_level
 
 allowed_private_sampling_inputs:
-  - old_BT_raw_score
+  - teacher_difficulty_level
   - aux11_auxiliary_features
 
 teacher_facing_candidate_file_must_exclude:
-  - old_BT_raw_score
-  - BT_score_decile
+  - teacher_difficulty_level
+  - teacher_difficulty_id
   - teacher_features
   - teacher_features_legacy18
   - all_absolute_difficulty_fields
 ```
 
-旧 BT 分数和 Aux11 只帮助选择题目、构造边和做离线审计，不能写入交给 Qwen3-32B 的
-候选 pair，避免 teacher 被旧模型结论提示。
+这里的 `teacher_difficulty_level` 只指
+`difficulty_rating.difficulty_level` 经 Prompt + V7 后处理得到的最终教师档位，不是原始
+题库 `difficulty`。最终档位和 Aux11 只用于私有选题审计，不能写入交给 Qwen3-32B 的
+候选 pair，避免 pair teacher 被已有结论提示。
 
-## 4. 先给完整 Train Pool 生成旧 BT 分数
+## 4. 为什么不再要求给完整 Train Pool 生成旧 BT 分数
 
-### 4.1 为什么需要旧模型分数
-
-11 维特征描述题目结构和解题过程，但不能代替连续难度轴。如果只按辅助特征平衡选题，
-仍可能大量集中在中间难度区域。
-
-因此使用 V3 已选出的最佳排序模型：
-
-```yaml
-reference_scorer:
-  model: Qwen3.5-4B
-  variant: V1_BT_only
-  checkpoint: checkpoint-epoch-3-step-1176
-  role: frozen_sampling_reference_only
-```
-
-该模型只提供一个旧版连续难度坐标，用于保证新 10,000 题覆盖从易到难的完整范围。它
-不是本轮 teacher，也不能作为新 pair 的训练标签。
-
-### 4.2 当前阻塞
-
-服务器已经搜索过运行目录，当前没有对应刷新 Train Pool 的：
-
-```text
-train_pool_scores.jsonl
-train_pool_scores.manifest.json
-```
-
-因此 BT 十分位选题尚不能实际执行。CPU 可以快速完成选题，但不能高效替代 GPU 运行
-Qwen3.5-4B 全池推理。
+刷新后的约 5.9 万道题已经全部经过同一版 Prompt 和后处理，具备最终五档和 Aux11。选题
+只需要粗粒度覆盖从送分题到压轴题，并不需要旧模型为每道题再生成一个连续标签。旧 V1
+BT-only checkpoint 只在 2,000 道旧训练题上学习过，让它主导新 10,000 题反而会把旧模型
+偏差带入新数据。
 
 ```yaml
-CPU_selection_benchmark:
-  simulated_pool_records: 58962
-  selected_records: 10000
-  wall_time_seconds: approximately_12.8
-  peak_memory: approximately_64_MB
-
-GPU_required_for:
-  - generating_raw_BT_scores
-
-CPU_only_after_scores_exist:
-  - score_decile_assignment
-  - feature_balanced_selection
-  - candidate_graph_construction
-  - both_pair_data_audits
+selection_policy:
+  primary_difficulty_stratum: teacher_difficulty_level
+  feature_balance: Aux11
+  raw_difficulty: forbidden
+  old_BT_full_pool_scoring: not_required
+  old_BT_selected_10k_scoring: optional_diagnostic_only
 ```
 
-如果分数缺失，脚本必须失败；禁止静默改用 API 五档、错误 `difficulty` 或纯随机选题。
-生成分数时必须排除旧 V3 的 2,000 个训练节点，以及所有 validation/test 节点；CPU
-选题时必须传入完全相同的 `--exclude-question-ids` 文件。分数文件与题池 hash 绑定，
-且分数 ID 集必须与排除后的候选池逐项相等，否则程序直接失败。这样 10,000 题表示新的
-训练覆盖，而不是再次为旧题购买 teacher pair 标签。
+可选的旧 BT 审计只对已经选出的 10,000 题运行，用于观察五档与旧 pairwise 排序是否大体
+单调、发现明显冲突样本。它不参与选题、不生成 pair 标签，也不是启动 teacher 标注的
+硬门禁。
 
 ## 5. 10,000 道题如何选择
 
-### 5.1 BT 十分位
+### 5.1 五档配额
 
-将刷新 Train Pool 按旧 V1 的 `raw_difficulty_score` 从低到高排序，使用稳定 ID 处理同分，
-切成 10 个等频区间。每个区间固定选择 1,000 道。在比例分配之前先执行类别覆盖下限：
-只要池中存在该类别，全局至少选择 `min(20, 池中数量)` 条；每个 BT 分位层内至少选择
-`min(2, 该层数量)` 条。一个题可同时满足 11 个头的多个覆盖目标，因此采用确定性
-set-cover 贪心选择，而不是构造 11 维联合笛卡尔积。
+先排除旧 V3 训练节点以及全部 validation/test 节点，再统计剩余 Train Pool 的最终教师
+五档。每档先分配 `min(1,000, 该档可用题数)`；剩余名额按各档在源 Train Pool 中的数量
+比例分配。如果某档容量不足，未使用名额自动重新分配给仍有容量的档位。
 
 ```yaml
-coverage_floor_first:
-  minimum_per_category_global: 20
-  minimum_per_category_per_BT_decile_when_available: 2
-remaining_slots:
-  distribution_matched: 0.80
-  rare_feature_protection: 0.10
-  deterministic_random_exploration: 0.10
+teacher_level_quota:
+  minimum_per_level_when_available: 1000
+  remaining_quota: proportional_to_source_teacher_level_distribution
+  selected_total: 10000
 ```
 
-最终保证：
+这种设计相当于“50% 五档覆盖保底 + 50% 接近源分布”，既避免送分题和压轴题被中间档
+淹没，也不像每档强制 2,000 题那样完全改变自然分布。最终实际配额必须写入 manifest，
+不能在看到 pair teacher 结果后修改。
 
-```yaml
-selected_per_decile: 1000
-selected_total: 10000
-difficulty_axis_coverage: equal_frequency
-```
-
-这里的十分位只表示旧 V1 模型下的相对位置，不是五档业务标签。
-每层固定 1,000 题是训练覆盖策略，故意接近“难度轴均匀采样”，并不声称复原线上题库的
-自然难度分布。自然分布只应由独立、冻结的 calibration 参考池表达；不能用这 10,000
-题的分位数直接设业务五档阈值。
-
-### 5.2 每个区间内部怎样分配
+### 5.2 每个难度档内部怎样分配
 
 #### 第一步：11 维类别覆盖下限
 
 先避免罕见类别在抽样后消失或只剩一个偶然样本。源池本身不足时取实际可用数量。这个
-步骤优先于比例分配，所以最终三种选择原因不必机械等于 800/100/100。
+步骤优先于比例分配：
+
+```yaml
+auxiliary_category_floor:
+  global_per_category: 20_when_available
+  per_teacher_level_per_category: 3_when_available
+```
+
+一个题可同时满足 11 个头的多个覆盖目标，因此采用确定性 set-cover 贪心选择，不构造
+“五档 × 11 维类别”的联合笛卡尔积。
 
 #### 剩余名额的 80%：11 维边际分布匹配
 
-在每个难度区间内，尽量让 10,000 题的 11 维特征边际分布接近完整 Train Pool，避免选出的
-题只覆盖少数题型或过程结构。
+在每个教师难度档内部，让入选题的 11 维边际分布尽量接近该档完整候选池。
 
 #### 剩余名额的 10%：稀有类别保护
 
-单纯匹配总体分布仍可能让稀有类别数量太少，因此每个难度区间额外保护稀有特征类别。
+单纯匹配总体分布仍可能让稀有类别数量太少，因此每个难度档额外保护稀有特征类别。
 保护对象是每个特征的类别，不是强行覆盖 11 维联合笛卡尔积。联合组合过于稀疏，
 强行分层会造成大量空格或极小样本格。
 
 #### 剩余名额的 10%：确定性随机探索
 
-保留 10% 不依赖特征启发式的随机样本，避免完全被旧 BT 模型和旧特征体系锁定。随机选择
+保留 10% 不依赖特征启发式的随机样本，避免完全被教师档位和旧特征体系锁定。随机选择
 由 seed 和 question ID 决定，可重复运行得到相同结果。
 
 ### 5.3 选题 Gate
@@ -247,26 +207,50 @@ difficulty_axis_coverage: equal_frequency
 ```yaml
 hard_checks:
   selected_questions: 10000
-  BT_deciles: 10
-  questions_per_decile: 1000
+  teacher_levels: 5
+  selected_counts_equal_allocated_level_quotas: true
+  minimum_per_level: 1000_when_available
   old_v3_training_questions_excluded: true
   all_validation_and_test_questions_excluded: true
-  missing_score_ids: 0
+  missing_teacher_level_ids: 0
   missing_feature_ids: 0
   duplicate_question_ids: 0
   train_only: true
   forbidden_fields_in_teacher_output: 0
-  score_IDs_exactly_equal_post_exclusion_pool: true
 
 feature_checks:
   zero_covered_source_categories: 0
   minimum_category_count_global: 20_when_available
-  minimum_category_count_per_BT_decile: 2_when_available
+  minimum_category_count_per_teacher_level: 3_when_available
   maximum_marginal_JSD: <=_0.05
 ```
 
-`question_selection.private.jsonl` 保存分数、十分位、选择原因和 11 维特征，用于内部审计；
+`question_selection.private.jsonl` 保存最终教师档位、选择原因和 11 维特征，用于内部审计；
 `questions.jsonl` 是无标签 teacher-facing 文件。
+
+### 5.4 CPU 选题命令
+
+```bash
+PAIR_ROOT=/data/$USER/physics-difficulty-runtime/pairwise_v4
+CURATED=/data/$USER/physics-difficulty-runtime/rater-data/curated/physics_teacher_v4_aux11_58977.jsonl
+OLD_V3_QUESTIONS=/data/$USER/physics-difficulty-runtime/pairwise_v3/pilot/questions.jsonl
+V3_VALIDATION_QUESTIONS=/data/$USER/physics-difficulty-runtime/pairwise_v3/validation_2000_v1/questions.jsonl
+
+mkdir -p "$PAIR_ROOT/train_10k_40k"
+
+python scripts/select_teacher_level_feature_balanced_questions.py \
+  --config configs/question_selection_v4_teacher_level_10k.json \
+  --questions "$PAIR_ROOT/questions/train.jsonl" \
+  --teacher-data "$CURATED" \
+  --exclude-question-ids "$OLD_V3_QUESTIONS" \
+  --exclude-question-ids "$V3_VALIDATION_QUESTIONS" \
+  --output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
+  --audit-output "$PAIR_ROOT/train_10k_40k/question_selection.private.jsonl" \
+  --manifest "$PAIR_ROOT/train_10k_40k/question_selection.manifest.json"
+```
+
+该命令只使用 CPU 和内存，不加载 Qwen，不需要 `POOL_SCORES`。运行后先检查 manifest 中
+五档实际配额、11 维覆盖、JSD、排除题数量和所有 guardrail，再进入构图。
 
 ## 6. 40,000 Pair 的 Feature-Aware 构图
 
@@ -372,12 +356,10 @@ features:
 还要检查 endpoint 分布，而不只检查 10,000 个节点的分布。同一类别即使入选题目数量足够，
 如果在 40,000 条边中出现次数太少，仍得不到足够训练监督。
 
-### 7.2 本轮需要新增的旧 BT 分数审计
+### 7.2 可选的旧 BT 分数诊断
 
-当前代码使用旧 BT 分数完成十分位选题，但还缺少一个独立的
-`prelabel_candidate_score_audit`，用于审计“边怎么连”。
-
-新审计至少输出：
+旧 BT 不再参与 10,000 题选择，也不是 Pre-label Gate 的必要条件。如果后续有空闲 GPU，
+可以只给选中的 10,000 题生成旧 V1 分数，用于辅助观察“边怎么连”，至少输出：
 
 ```yaml
 candidate_score_gap:
@@ -390,8 +372,8 @@ candidate_score_gap:
   signed_gap_balance:
     A_harder_share: REQUIRED
     B_harder_share: REQUIRED
-  BT_decile_distance_distribution: REQUIRED
-  endpoint_occurrences_by_BT_decile: REQUIRED
+  teacher_level_pair_distance_distribution: REQUIRED
+  endpoint_occurrences_by_teacher_level: REQUIRED
   source_conditioned_gap_distribution:
     - feature_near
     - feature_contrast
@@ -402,9 +384,9 @@ candidate_score_gap:
     - low_degree_repair
 ```
 
-预期检查逻辑：
+诊断时可检查：
 
-- 每个 BT 十分位不仅节点数相同，边端点出现次数也不能严重失衡；
+- 每个教师档位的边端点出现次数不能严重失衡；
 - `feature_near` 和 `lexical_near` 应包含足够局部难度差边，而不是全部退化为大跨度 easy
   pair；
 - `feature_contrast`、`random_global` 和 `graph_bridge` 应提供较多跨分位边；
@@ -412,8 +394,25 @@ candidate_score_gap:
 - 也不能全部集中在旧模型分差接近 0 的高噪声 pair；
 - A/B 正负方向应近似平衡，避免候选文件顺序形成位置先验。
 
-旧 BT 模型只用于描述候选边的跨度和覆盖，不给 pair 生成标签。具体分差阈值不应在看到
-teacher 结果后倒推；首轮先报告完整分布并与相同节点上的随机图对照，再冻结后续 gate。
+旧 BT 模型只用于描述候选边的跨度和覆盖，不给 pair 生成标签。若团队决定将该诊断升级
+为后续版本的固定 gate，必须先在当前 teacher 结果不可见时与相同节点的随机图对照，再把
+阈值写入版本化配置：
+
+```yaml
+prelabel_score_distribution_gate:
+  reference: same_nodes_random_graph_seed_42
+  local_edge_gap_median: TO_FREEZE_AFTER_PILOT
+  global_edge_gap_p75: TO_FREEZE_AFTER_PILOT
+  teacher_level_endpoint_share_max_deviation: TO_FREEZE_AFTER_PILOT
+  direction_balance_abs_difference: TO_FREEZE_AFTER_PILOT
+  failure_action: revise_pair_source_weights_or_resample_graph
+```
+
+其中局部边与全局边的要求方向固定：`feature_near` / `lexical_near` 的分差中位数应低于随机
+图，`feature_contrast` / `random_global` / `graph_bridge` 的高分位差应高于随机图。数值阈值只
+能在看新 teacher 标签前，根据候选图与随机图的对照冻结。
+
+当前 V4 首轮不要求生成这份旧 BT gate，也不能因为缺少旧 BT 分数阻塞 40,000 pair 标注。
 
 ### 7.3 Pre-label Gate 的输出
 
@@ -421,11 +420,12 @@ teacher 结果后倒推；首轮先报告完整分布并与相同节点上的随
 question_selection.manifest.json
 candidates.manifest.json
 prelabel_structure_feature_audit.json
-prelabel_candidate_score_audit.json
+optional_prelabel_candidate_score_audit.json
+optional_prelabel_score_distribution_gate.json
 ```
 
-只有硬结构检查全部通过、11 维覆盖通过且旧 BT 分差分布没有明显坍缩，才启动 40,000
-pair teacher 标注。
+只有题目配额、数据隔离、图结构和 11 维覆盖全部通过，才启动 40,000 pair teacher 标注。
+旧 BT 诊断不参与本轮硬门禁。
 
 ## 8. Teacher 打标阶段的新增点
 
@@ -462,9 +462,9 @@ monitor:
 
 对 final pair 数据拟合一个不读文本、不读辅助特征的经典 scalar Bradley–Terry 模型：
 
-\[
+$$
 P(A>B)=\sigma(s_A-s_B)
-\]
+$$
 
 它只给每个 `question_id` 学一个自由标量，因此审计的是 pair 数据本身，不是 Qwen 学生
 模型能力。
@@ -479,6 +479,17 @@ P(A>B)=\sigma(s_A-s_B)
 - 能在统一尺度上拟合所有题目的 BT score。
 
 held-out 边用于检查由其余边学出的全局分数是否能解释未参与拟合的 teacher pair。
+
+bootstrap 也必须保持相同的连通性原则。普通有放回抽边可能恰好丢失桥边；一旦图断开，
+不同分量之间的 BT 分数整体平移不可识别，Spearman 稳定性就没有解释价值。因此采用：
+
+```yaml
+bootstrap_policy:
+  method: connectivity_preserving_bootstrap
+  keep_spanning_tree: true
+  resample: redundant_edges_with_replacement
+  reject_disconnected_runs: true
+```
 
 ### 9.3 Post-label Gate
 
@@ -497,13 +508,16 @@ quality_gate:
 
 同时报告：
 
-- held-out Soft Pairwise Log Loss；
-- Brier Score；
+- 加权和非加权两套 held-out Soft Pairwise Log Loss、Brier Score；
 - Pairwise Accuracy/AUC；
 - Decisive Accuracy；
 - 每道题 BT score 的近似标准误和 95% 区间；
 - bootstrap 最难/最易 10% 集合重叠率；
 - teacher target 与 BT 概率残差最大的 pair。
+
+加权指标使用 `sample_weight`，用于判断与学生训练目标一致的标签质量；非加权指标让每条
+已接受 pair 等权，用于暴露被降权的 `order_sensitive` 边是否仍系统性较差。两者都必须进入
+报告，不能只保留其中一套。
 
 输出：
 
@@ -647,6 +661,10 @@ offline BT audit，但必须使用独立 validation pool，不能从训练图抽
    如果新模型只在新 validation 上提升、在旧 validation 上下降，说明可能存在分布迁移，
    不能简单表述为全面提升。
 
+固定 V3 Validation 与 V4 训练节点没有题目或规范化文本重叠，且当前 V4 选题不再读取由
+它协助选出的旧 V1 reference scorer。它仍主要承担**回归与跨版本比较**：V4 checkpoint
+只由预注册的新 V4 validation 选择，避免反复查看旧集造成隐性调参。
+
 ### 11.4 Checkpoint 选择
 
 ```yaml
@@ -661,6 +679,11 @@ fixed_V3_validation:
   role: regression_and_cross_version_comparison
 test_OOT:
   role: one_time_final_evaluation_after_freeze
+  source: TO_BE_REGISTERED_BEFORE_V4_TRAINING
+  label_source: human_adjudication_or_frozen_teacher
+  question_overlap_with_train_validation_calibration: 0
+  normalized_text_overlap_with_train_validation_calibration: 0
+  selection_or_threshold_tuning: forbidden
 ```
 
 在看到 V4 结果前，需要根据旧模型在新 validation 上的表现预注册“允许的旧集回退范围”。
@@ -703,6 +726,34 @@ must_not_reuse:
 - test/OOT；
 - 重复或近重复题。
 
+在训练前还必须注册并产出：
+
+```yaml
+calibration_reference_pool:
+  source: TO_BE_REGISTERED
+  target_size: TO_BE_REGISTERED
+  selection_policy: representative_natural_business_distribution
+  exclusions:
+    - V4_train_nodes
+    - V3_validation_nodes
+    - V4_validation_nodes
+    - test_OOT_nodes
+    - normalized_duplicates
+  required_artifacts:
+    - calibration_pool.jsonl
+    - calibration_pool.manifest.json
+    - reference_scores.jsonl
+    - calibration.json
+  required_checks:
+    - source_snapshot_hash
+    - group_and_normalized_text_isolation
+    - input_distribution_report
+```
+
+`calibration_pool.manifest.json` 要记录题目快照 hash、排除 ID 文件 hash、渲染版本、所用
+checkpoint fingerprint 与最终阈值。这样五档分数可以回溯到固定参考系，而不是只记录一组
+不可复现的阈值。
+
 部署细节直接参考 V3 报告，不在本文重复。
 
 ## 13. 本轮实验验收表
@@ -713,50 +764,52 @@ stage_1_refresh_preparation:
   train_validation_test_group_isolation: PENDING
   forbidden_difficulty_usage: MUST_BE_FALSE
 
-stage_2_pool_scoring:
-  V3_V1_checkpoint_bound_scores: MISSING
-  score_manifest_hash_match: PENDING
-
-stage_3_question_selection:
+stage_2_question_selection:
   selected_10000: PENDING
-  exact_1000_per_BT_decile: PENDING
+  teacher_level_quotas_frozen: PENDING
+  minimum_1000_per_level_when_available: PENDING
+  raw_difficulty_used: MUST_BE_FALSE
+  old_BT_score_used_for_selection: MUST_BE_FALSE
   all_aux11_categories_covered: PENDING
   maximum_feature_JSD_lte_0.05: PENDING
 
-stage_4_candidate_graph:
+stage_3_candidate_graph:
   edges_40000: PENDING
   nodes_10000: PENDING
   connected_components_1: PENDING
   mean_degree_8: PENDING
   degree_range_4_to_16: PENDING
 
-stage_5_prelabel_audit:
+stage_4_prelabel_audit:
   structural_feature_gate: PENDING
-  old_BT_score_gap_report: TO_IMPLEMENT
-  random_graph_comparison: TO_IMPLEMENT
+  selected_10k_old_BT_score_gap_report: OPTIONAL
+  random_graph_comparison: OPTIONAL
 
-stage_6_teacher:
+stage_5_teacher:
   cascade_complete: PENDING
   final_pair_count: UNKNOWN
   parse_success_rate: PENDING
   quarantine_rate: PENDING
 
-stage_7_postlabel_audit:
+stage_6_postlabel_audit:
   offline_BT_gate: PENDING
   severe_residual_rate_lte_0.05: PENDING
   bootstrap_mean_spearman_gte_0.90: PENDING
+  connectivity_preserving_bootstrap: TO_IMPLEMENT
+  weighted_and_unweighted_heldout_metrics: TO_IMPLEMENT
 
-stage_8_training:
+stage_7_training:
   BT_only: PENDING
   Aux11_w003: PENDING
   all_quarter_epoch_checkpoints_evaluated: PENDING
 
-stage_9_double_validation:
+stage_8_double_validation:
   fixed_V3_validation: PENDING
   new_V4_validation: TO_BUILD
   cross_model_cross_dataset_matrix: PENDING
+  final_test_OOT_registered: PENDING
 
-stage_10_deployment:
+stage_9_deployment:
   selected_checkpoint: PENDING
   vLLM_parity_PASS: PENDING
   new_calibration: PENDING
@@ -768,8 +821,10 @@ stage_10_deployment:
 
 ```yaml
 ready:
-  - scripts/select_bt_feature_balanced_questions.py
-  - configs/question_selection_v4_bt_decile_10k.json
+  - scripts/select_teacher_level_feature_balanced_questions.py
+  - configs/question_selection_v4_teacher_level_10k.json
+  - scripts/select_bt_feature_balanced_questions.py  # optional historical comparator
+  - configs/question_selection_v4_bt_decile_10k.json  # optional historical comparator
   - scripts/build_raw_v3_pair_candidates.py
   - configs/pair_sampling_v4_feature_aware_10k_40k.json
   - src/physics_difficulty/pairwise/feature_coverage.py
@@ -782,15 +837,17 @@ ready:
 
 ```yaml
 to_do:
-  - generate_full_refresh_train_pool_scores_on_GPU
-  - implement_prelabel_candidate_score_audit
-  - define_and_freeze_prelabel_score_distribution_gate
+  - run_teacher_level_aux11_question_selection_on_CPU
+  - optionally_score_selected_10k_with_old_BT
+  - implement_connectivity_preserving_bootstrap
+  - report_weighted_and_unweighted_offline_BT_metrics
   - add_validation_v4_1000_question_4000_pair_config
+  - register_final_test_OOT_before_V4_training
   - run_prelabel_and_postlabel_audits_for_new_validation
   - add_cross_model_cross_validation_matrix_report
   - add_new_training_run_configs_and_output_names
   - rerun_vLLM_parity_for_selected_V4_checkpoint
-  - build_new_reference_calibration
+  - register_and_build_new_reference_calibration
 ```
 
 ## 15. 决策原则

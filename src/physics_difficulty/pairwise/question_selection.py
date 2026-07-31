@@ -6,7 +6,7 @@ import math
 from collections import Counter, defaultdict
 from typing import Any, Sequence
 
-from physics_difficulty.schema import FEATURE_VALUES
+from physics_difficulty.schema import DIFFICULTY_LEVELS, FEATURE_VALUES
 
 
 def _stable_key(seed: int, question_id: str, namespace: str) -> str:
@@ -467,5 +467,245 @@ def select_questions_by_bt_decile(
             row["bt_decile"],
             row["bt_score"],
             row["question_id"],
+        ),
+    )
+
+
+def allocate_teacher_level_quotas(
+    level_counts: dict[str, int],
+    *,
+    target_count: int,
+    minimum_per_level: int = 1_000,
+) -> dict[str, int]:
+    """Allocate a balanced floor, then distribute the remainder proportionally."""
+    if set(level_counts) != set(DIFFICULTY_LEVELS):
+        missing = set(DIFFICULTY_LEVELS) - set(level_counts)
+        extra = set(level_counts) - set(DIFFICULTY_LEVELS)
+        raise ValueError(
+            f"teacher level counts do not match schema: missing={sorted(missing)}, "
+            f"extra={sorted(extra)}"
+        )
+    if minimum_per_level < 0:
+        raise ValueError("minimum_per_level must be non-negative")
+    if not 1 <= target_count <= sum(level_counts.values()):
+        raise ValueError("target_count must be within the teacher-labeled pool")
+
+    quotas = {
+        level: min(minimum_per_level, level_counts[level])
+        for level in DIFFICULTY_LEVELS
+    }
+    if sum(quotas.values()) > target_count:
+        raise ValueError(
+            "balanced teacher-level floors exceed target_count; reduce minimum_per_level"
+        )
+
+    remaining = target_count - sum(quotas.values())
+    while remaining:
+        eligible = [
+            level
+            for level in DIFFICULTY_LEVELS
+            if quotas[level] < level_counts[level]
+        ]
+        if not eligible:
+            raise RuntimeError("teacher-level quota allocation exhausted the pool")
+        weight_total = sum(level_counts[level] for level in eligible)
+        raw = {
+            level: remaining * level_counts[level] / weight_total
+            for level in eligible
+        }
+        allocated = 0
+        for level in eligible:
+            capacity = level_counts[level] - quotas[level]
+            addition = min(capacity, math.floor(raw[level]))
+            quotas[level] += addition
+            allocated += addition
+        remaining -= allocated
+        if not remaining:
+            break
+        # Largest-remainder allocation with the declared difficulty order as
+        # the final deterministic tie-breaker.
+        ranked = sorted(
+            eligible,
+            key=lambda level: (
+                -(raw[level] - math.floor(raw[level])),
+                DIFFICULTY_LEVELS.index(level),
+            ),
+        )
+        progressed = False
+        for level in ranked:
+            if not remaining:
+                break
+            if quotas[level] >= level_counts[level]:
+                continue
+            quotas[level] += 1
+            remaining -= 1
+            progressed = True
+        if not progressed and remaining:
+            raise RuntimeError("teacher-level quota allocation made no progress")
+    return quotas
+
+
+def select_questions_by_teacher_level(
+    question_ids: Sequence[str],
+    levels: dict[str, str],
+    features: dict[str, dict[str, str]],
+    *,
+    target_count: int = 10_000,
+    minimum_per_level: int = 1_000,
+    distribution_fraction: float = 0.80,
+    rare_fraction: float = 0.10,
+    random_fraction: float = 0.10,
+    minimum_category_count_global: int = 20,
+    minimum_category_count_per_level: int = 3,
+    seed: int = 42,
+) -> list[dict[str, Any]]:
+    """Select exact teacher-level quotas with auxiliary-feature coverage."""
+    ids = [str(value) for value in question_ids]
+    if not ids or len(set(ids)) != len(ids):
+        raise ValueError("question IDs must be non-empty and unique")
+    expected = set(ids)
+    if set(levels) != expected:
+        raise ValueError(
+            f"teacher level IDs do not match question pool: "
+            f"missing={len(expected - set(levels))}, extra={len(set(levels) - expected)}"
+        )
+    invalid_levels = {
+        question_id: levels[question_id]
+        for question_id in ids
+        if levels[question_id] not in DIFFICULTY_LEVELS
+    }
+    if invalid_levels:
+        preview = list(invalid_levels.items())[:5]
+        raise ValueError(f"invalid teacher difficulty levels: {preview}")
+    if set(features) != expected:
+        raise ValueError(
+            f"feature IDs do not match question pool: "
+            f"missing={len(expected - set(features))}, extra={len(set(features) - expected)}"
+        )
+    for question_id in ids:
+        for name, values in FEATURE_VALUES.items():
+            if features[question_id].get(name) not in values:
+                raise ValueError(
+                    f"question {question_id} has invalid auxiliary feature {name}"
+                )
+
+    level_counts = Counter(levels.values())
+    quotas = allocate_teacher_level_quotas(
+        {level: level_counts[level] for level in DIFFICULTY_LEVELS},
+        target_count=target_count,
+        minimum_per_level=minimum_per_level,
+    )
+    assignments = {
+        question_id: DIFFICULTY_LEVELS.index(levels[question_id]) + 1
+        for question_id in ids
+    }
+    floor_targets = _category_floor_targets(
+        ids,
+        assignments,
+        features,
+        deciles=len(DIFFICULTY_LEVELS),
+        minimum_global=minimum_category_count_global,
+        minimum_per_decile=minimum_category_count_per_level,
+    )
+    pools = {
+        level: [
+            question_id for question_id in ids if levels[question_id] == level
+        ]
+        for level in DIFFICULTY_LEVELS
+    }
+
+    result: list[dict[str, Any]] = []
+    for level_index, level in enumerate(DIFFICULTY_LEVELS, 1):
+        pool = pools[level]
+        quota = quotas[level]
+        selected: dict[str, str] = {}
+        selected_counts: Counter[tuple[str, str]] = Counter()
+        _select_category_floor(
+            pool,
+            floor_targets[level_index],
+            selected,
+            selected_counts,
+            features,
+            quota=quota,
+            seed=seed,
+            decile=level_index,
+        )
+        remaining_quota = quota - len(selected)
+        distribution_count, rare_count, random_count = _reason_counts(
+            remaining_quota,
+            distribution_fraction,
+            rare_fraction,
+            random_fraction,
+        )
+
+        random_ids = sorted(
+            (question_id for question_id in pool if question_id not in selected),
+            key=lambda question_id: _stable_key(
+                seed, question_id, f"teacher-level-random-{level}"
+            ),
+        )[:random_count]
+        for question_id in random_ids:
+            _add_selected(
+                question_id,
+                "random_exploration",
+                selected,
+                selected_counts,
+                features,
+            )
+
+        category_members: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for question_id in pool:
+            for name in FEATURE_VALUES:
+                category_members[(name, features[question_id][name])].append(
+                    question_id
+                )
+        for category, members in category_members.items():
+            members.sort(
+                key=lambda question_id: _stable_key(
+                    seed, question_id, f"teacher-level-category-{level}-{category}"
+                )
+            )
+        category_counts = Counter(
+            {category: len(members) for category, members in category_members.items()}
+        )
+        _select_rare(
+            pool,
+            rare_count,
+            selected,
+            selected_counts,
+            features,
+            category_counts,
+            seed=seed,
+            decile=level_index,
+        )
+        _select_distribution_matched(
+            pool,
+            distribution_count,
+            quota,
+            selected,
+            selected_counts,
+            features,
+            category_members,
+            seed=seed,
+            decile=level_index,
+        )
+        if len(selected) != quota:
+            raise RuntimeError(
+                f"teacher level {level} selected {len(selected)} instead of {quota}"
+            )
+        result.extend(
+            {
+                "question_id": question_id,
+                "teacher_difficulty_level": level,
+                "teacher_difficulty_id": level_index - 1,
+                "selection_reason": reason,
+            }
+            for question_id, reason in selected.items()
+        )
+    return sorted(
+        result,
+        key=lambda row: (
+            row["teacher_difficulty_id"],
+            _stable_key(seed, row["question_id"], "teacher-level-output"),
         ),
     )

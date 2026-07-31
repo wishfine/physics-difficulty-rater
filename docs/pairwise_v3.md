@@ -529,18 +529,19 @@ anchor calibration 对照实验：用锚点分数拟合四个有教育语义的�
 
 刷新后的教师文件规范化后有 58,962 条不同文本记录。训练图第一阶段不把全部题目
 一次性构图，而是在 train split 中选择 10,000 道题、构建 40,000 条候选边，平均度数
-为 8。绝对 `difficulty`、`raw_difficulty`、`teacher_difficulty_id` 和
-`teacher_difficulty_level` 均不参与选题或构边。
+为 8。原始 `difficulty`、`raw_difficulty` 和 `teacher_difficulty_id` 不参与选题或构边；
+Prompt + 后处理产生的最终 `teacher_difficulty_level` 只用于私有选题分层，不写入候选
+pair，也不作为 pair 标签。
 
-选题前先使用已有最佳 BT-only checkpoint 生成 train pool 单题分数。实际选择完全在
-CPU 内存中运行，读取分数文件和其 hash-bound manifest，不加载 Qwen。train pool 按
-分数排名分成十个等频区间，每个区间选择 1,000 道。先满足 11 个辅助头各类别的覆盖
-下限，再分配剩余名额：
+刷新题池已经由同一版 Prompt + 后处理生成最终教师五档，因此不再要求用旧 BT-only
+checkpoint 给全池打分。选择完全在 CPU 内存中运行，不加载 Qwen。每个教师档位先保留
+最多 1,000 题，剩余名额按源五档分布分配；档内先满足 11 个辅助头各类别的覆盖下限，
+再分配剩余名额：
 
 ```yaml
 category_floor:
   global: 20_when_available
-  per_bt_decile: 2_when_available
+  per_teacher_level: 3_when_available
 remaining_slots:
   distribution_matched: 0.80
   rare_feature_protection: 0.10
@@ -549,7 +550,7 @@ remaining_slots:
 
 当前 11 维通过独立 `--features-file` 输入，用于：
 
-1. 每个 BT 分数区间内尽量保持 11 个特征各自的边际分布；
+1. 每个教师难度档内部尽量保持 11 个特征各自的边际分布；
 2. 保护稀有特征类别并保留 10% 模型无关的探索样本；
 3. 构边时生成 feature-near 和 feature-contrast pair。
 
@@ -585,12 +586,10 @@ low_degree_repair: 0.05
 CPU 选题命令为：
 
 ```bash
-python scripts/select_bt_feature_balanced_questions.py \
-  --config configs/question_selection_v4_bt_decile_10k.json \
+python scripts/select_teacher_level_feature_balanced_questions.py \
+  --config configs/question_selection_v4_teacher_level_10k.json \
   --questions "$PAIR_ROOT/questions/train.jsonl" \
-  --features-file "$CURATED" \
-  --scores "$POOL_SCORES" \
-  --scores-manifest "$POOL_SCORES_MANIFEST" \
+  --teacher-data "$CURATED" \
   --exclude-question-ids "$OLD_V3_QUESTIONS" \
   --exclude-question-ids "$V3_VALIDATION_QUESTIONS" \
   --output "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
@@ -598,8 +597,9 @@ python scripts/select_bt_feature_balanced_questions.py \
   --manifest "$PAIR_ROOT/train_10k_40k/question_selection.manifest.json"
 ```
 
-如果没有预先生成的 BT score 文件，选题脚本会拒绝运行；不得静默改用 API 五档、
-错误的 `difficulty`，或退化为全随机选择。
+选择器只读取 Prompt + 后处理后的 `teacher_difficulty_level`，明确忽略错误的原始
+`difficulty/raw_difficulty`。旧 BT 分数只可在选后作为可选诊断，不能参与选题或生成
+pair 标签。
 
 ## 13. 离线 Bradley--Terry pair 数据审计
 
