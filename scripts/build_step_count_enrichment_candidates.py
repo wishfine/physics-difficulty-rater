@@ -124,6 +124,11 @@ def main() -> None:
     unknown = sorted(set(quotas) - supported_strata)
     if unknown or any(value < 0 for value in quotas.values()):
         raise ValueError(f"invalid stratum quotas: {unknown}")
+    if sum(quotas.values()) > args.target_questions:
+        raise ValueError(
+            f"sum of stratum quotas ({sum(quotas.values())}) exceeds "
+            f"target-questions ({args.target_questions}); reduce quotas or increase the candidate budget"
+        )
 
     selected: dict[str, tuple[dict[str, Any], dict[str, str], list[str]]] = {}
     selected_by_reason: dict[str, set[str]] = defaultdict(set)

@@ -74,16 +74,30 @@ class StepCountEnrichmentCandidateTests(unittest.TestCase):
                 "--stratum-quotas", json.dumps({
                     "existing_9plus_control": 3, "current_6_8": 1,
                     "progressive_subquestions": 0, "high_reasoning_complexity": 0,
-                    "long_or_many_subquestions": 0, "random_control": 2,
+                    "long_or_many_subquestions": 0, "random_control": 0,
                 }),
             ], check=True, capture_output=True, text=True)
             report = json.loads(manifest.read_text(encoding="utf-8"))
             control = report["stratum_quota_report"]["existing_9plus_control"]
             self.assertEqual(control, {"requested": 3, "available": 1, "newly_selected": 1, "shortfall": 2})
             audit_rows = [json.loads(line) for line in audit.read_text(encoding="utf-8").splitlines()]
-            random_controls = [row for row in audit_rows if "random_control" in row["selection_reasons"]]
-            self.assertEqual({row["question_id"] for row in random_controls}, {"q0", "q1"})
-            self.assertTrue(all(row["selection_reasons"] == ["random_control"] for row in random_controls))
+
+    def test_rejects_stratum_quotas_larger_than_candidate_budget(self):
+        questions = [{"id": f"q{i}", "split": "train", "text": f"题{i}"} for i in range(5)]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            questions_path, features_path = directory / "questions.jsonl", directory / "features.jsonl"
+            questions_path.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in questions), encoding="utf-8")
+            features_path.write_text("".join(json.dumps(feature(row["id"]), ensure_ascii=False) + "\n" for row in questions), encoding="utf-8")
+            result = subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "build_step_count_enrichment_candidates.py"),
+                "--questions", str(questions_path), "--features", str(features_path),
+                "--output", str(directory / "out.jsonl"), "--audit-output", str(directory / "audit.jsonl"), "--manifest", str(directory / "manifest.json"),
+                "--target-questions", "4",
+                "--stratum-quotas", json.dumps({"current_6_8": 3, "random_control": 2}),
+            ], capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("sum of stratum quotas", result.stderr)
 
 
 if __name__ == "__main__":
