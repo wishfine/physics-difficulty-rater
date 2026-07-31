@@ -475,6 +475,11 @@ teacher 仍需选择最能代表核心解题任务的一类。物理知识领域
 | 9步以上 | 需要很长的连续推理链、多个阶段或多问递进 |
 
 旧 frozen18 中的“9-12步”和“12步以上”已合并为“9步以上”，避免最高两档样本过少。
+这项合并在生成 curated 数据时已经完成：`prepare_teacher_data.py` 将原始
+`teacher_features_legacy18.step_count` 规范化后写入 `teacher_features.step_count`；
+`attach_pairwise_auxiliary_features.py` 构造 8000-pair 的 Aux10 训练文件时只读取
+`teacher_features`，不会读取 legacy18。旧字段仍保留原始值仅用于数据追溯，模型实际训练
+只接受“1-2步 / 3-5步 / 6-8步 / 9步以上”四类。
 
 #### 3. `calculation_complexity`：计算链复杂度
 
