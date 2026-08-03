@@ -43,10 +43,8 @@ def complete_features(row: dict[str, Any]) -> dict[str, str] | None:
 def candidate_reasons(question: dict[str, Any], features: dict[str, str]) -> list[str]:
     diagnostics = question.get("diagnostics") or {}
     reasons: list[str] = []
-    if features["step_count"] == "9步以上":
-        reasons.append("existing_9plus_control")
-    if features["step_count"] == "6-8步":
-        reasons.append("current_6_8")
+    if features["step_count"] == "6步以上":
+        reasons.append("existing_6plus_control")
     if features["subquestion_dependency"] == "多问且层层递进":
         reasons.append("progressive_subquestions")
     if (
@@ -118,7 +116,7 @@ def main() -> None:
 
     quotas = {str(name): int(value) for name, value in args.stratum_quotas.items()}
     supported_strata = {
-        "existing_9plus_control", "current_6_8", "progressive_subquestions",
+        "existing_6plus_control", "progressive_subquestions",
         "high_reasoning_complexity", "long_or_many_subquestions", "random_control",
     }
     unknown = sorted(set(quotas) - supported_strata)
@@ -149,7 +147,7 @@ def main() -> None:
     stratum_pools = {
         reason: [record for record in records if reason in record[2]]
         for reason in (
-            "existing_9plus_control", "current_6_8", "progressive_subquestions",
+            "existing_6plus_control", "progressive_subquestions",
             "high_reasoning_complexity", "long_or_many_subquestions",
         )
     }
@@ -158,7 +156,7 @@ def main() -> None:
     stratum_pools["random_control"] = [record for record in records if not record[2]]
     quota_report = {}
     for reason in (
-        "existing_9plus_control", "current_6_8", "progressive_subquestions",
+        "existing_6plus_control", "progressive_subquestions",
         "high_reasoning_complexity", "long_or_many_subquestions",
     ):
         quota = quotas.get(reason, 0)
@@ -207,7 +205,7 @@ def main() -> None:
     original_counts = Counter(features["step_count"] for _, features, _ in ordered)
     selection_reason_counts = Counter(reason for row in audit_rows for reason in row["selection_reasons"])
     manifest = {
-        "schema_version": "step_count_enrichment_candidates_v1",
+        "schema_version": "step_count_enrichment_candidates_v2_step3",
         "questions": str(Path(args.questions).resolve()),
         "features": str(Path(args.features).resolve()),
         "output": str(output_path.resolve()),

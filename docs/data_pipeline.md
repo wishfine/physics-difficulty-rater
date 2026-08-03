@@ -151,7 +151,7 @@ teacher_features_legacy18:
 ```yaml
 teacher_features:
   problem_structure: "9 分类：概念判断、直接计算、实验探究、图像表格分析、电路综合、力学综合、热学综合、光学声学综合、跨模块综合"
-  step_count: "4 分类：1-2步、3-5步、6-8步、9步以上"
+  step_count: "3 分类：1-2步、3-5步、6步以上"
   calculation_complexity: 4 分类
   reasoning_chain: 4 分类
   knowledge_count: 3 分类
@@ -164,9 +164,11 @@ teacher_features:
 ```
 
 `knowledge_domains` 仅作为元数据，不参与损失。完整 18 维保存于
-`teacher_features_legacy18`，派生 11 维保存于 `teacher_features`，版本标记为
-`aux11_separate_processing_v4`。原始 `9-12步` 和 `12步以上` 统一映射为 `9步以上`：
-现有数据中最高两档极度稀疏，强行拆开无法形成可学习且可稳定评估的类别。V3 的
+`teacher_features_legacy18`，派生 11 维保存于 `teacher_features`，当前版本标记为
+`aux11_step3_v5`。原始 `6-8步`、`9-12步`、`12步以上` 以及历史派生值 `9步以上`
+统一映射为 `6步以上`。58,977 条原始教师记录中，`9-12步` 只有 22 条、`12步以上`
+只有 3 条；即使合并为 `9步以上` 也只有 25 条，无法形成可学习且可稳定评估的类别。
+三档映射后的支持数为 30,084 / 25,495 / 3,398。V3 的
 `information_processing` 合并头仅用于旧 checkpoint 只读兼容，不能续训成当前 11 头。
 
 ## 5. 教师打标、校验与清洗

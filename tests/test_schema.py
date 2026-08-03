@@ -3,7 +3,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from physics_difficulty.schema import FEATURE_VALUES, normalize_knowledge_domains, normalize_v2_features
+from physics_difficulty.schema import FEATURE_SCHEMA_VERSION, FEATURE_VALUES, normalize_knowledge_domains, normalize_v2_features
 from physics_difficulty.data.formatting import format_question
 from physics_difficulty.data.truncation import render_with_token_budget
 
@@ -20,9 +20,11 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(normalize_v2_features({"problem_structure": "电路综合"})["problem_structure"], "电路综合")
         self.assertEqual(normalize_knowledge_domains({"problem_structure": "电路综合"}), ["电路"])
 
-    def test_sparse_high_step_bins_are_merged(self):
-        self.assertEqual(normalize_v2_features({"step_count": "9-12步"})["step_count"], "9步以上")
-        self.assertEqual(normalize_v2_features({"step_count": "12步以上"})["step_count"], "9步以上")
+    def test_step_count_uses_three_supported_bins(self):
+        self.assertEqual(FEATURE_SCHEMA_VERSION, "aux11_step3_v5")
+        self.assertEqual(FEATURE_VALUES["step_count"], ["1-2步", "3-5步", "6步以上"])
+        for source in ("6-8步", "9-12步", "12步以上", "9步以上", "6步以上"):
+            self.assertEqual(normalize_v2_features({"step_count": source})["step_count"], "6步以上")
 
     def test_graph_and_experiment_requirements_stay_separate(self):
         features = normalize_v2_features({"graph_table_requirement": "直接读数", "experiment_requirement": "控制变量或故障分析"})

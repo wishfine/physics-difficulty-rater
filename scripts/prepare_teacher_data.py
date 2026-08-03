@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 from physics_difficulty.data.formatting import FORMATTER_VERSION, canonical_sections, diagnostics, format_question
 from physics_difficulty.data.quality import score_label_quality
-from physics_difficulty.schema import FROZEN_18_FEATURE_NAMES, difficulty_id, normalize_knowledge_domains, normalize_v2_features
+from physics_difficulty.schema import FEATURE_SCHEMA_VERSION, FROZEN_18_FEATURE_NAMES, difficulty_id, normalize_knowledge_domains, normalize_v2_features
 
 
 def text_hash(text: str) -> str:
@@ -40,7 +40,7 @@ def main() -> None:
     parser.add_argument("--teacher-model", default="unknown")
     parser.add_argument("--source-dataset-id", default="unknown")
     parser.add_argument("--label-source", default="api_v7_frozen18")
-    parser.add_argument("--feature-schema-version", default="aux11_separate_processing_v4")
+    parser.add_argument("--feature-schema-version", default=FEATURE_SCHEMA_VERSION)
     parser.add_argument("--label-schema-version", default="v2_frozen18")
     args = parser.parse_args()
 

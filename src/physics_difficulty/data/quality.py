@@ -8,7 +8,7 @@ from physics_difficulty.schema import DIFFICULTY_TO_ID
 
 def feature_conflicts(level: str, features: Dict[str, Any]) -> List[Tuple[str, str]]:
     conflicts: List[Tuple[str, str]] = []
-    hard_steps = {"6-8步", "9步以上"}
+    hard_steps = {"6步以上"}
     if level == "送分题" and (features["step_count"] in hard_steps or features["constraint_count"] == "多约束" or features["variable_relation"] == "多变量耦合关系"):
         conflicts.append(("severe", "送分题与高复杂度特征冲突"))
     if level == "压轴题" and all((

@@ -138,14 +138,14 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             overrides, output, manifest = directory / "overrides.jsonl", directory / "joined.jsonl", directory / "manifest.json"
             pairs.write_text(json.dumps(pair, ensure_ascii=False) + "\n", encoding="utf-8")
             teacher.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in teachers), encoding="utf-8")
-            overrides.write_text(json.dumps({"question_id": "qa", "step_count": "9步以上"}, ensure_ascii=False) + "\n", encoding="utf-8")
+            overrides.write_text(json.dumps({"question_id": "qa", "step_count": "6步以上"}, ensure_ascii=False) + "\n", encoding="utf-8")
             subprocess.run([
                 sys.executable, str(ROOT / "scripts" / "attach_pairwise_auxiliary_features.py"),
                 "--pairs", str(pairs), "--features", str(teacher), "--output", str(output),
                 "--manifest", str(manifest), "--step-count-overrides", str(overrides),
             ], check=True, capture_output=True, text=True)
             joined = json.loads(output.read_text(encoding="utf-8"))
-            self.assertEqual(joined["auxiliary_features"]["question_a"]["step_count"], "9步以上")
+            self.assertEqual(joined["auxiliary_features"]["question_a"]["step_count"], "6步以上")
             report = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(report["step_count_overrides_applied"], 1)
 

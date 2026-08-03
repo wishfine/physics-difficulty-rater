@@ -26,7 +26,7 @@ from physics_difficulty.data.pairwise_dataset import PairwiseDifficultyDataset
 from physics_difficulty.models.pairwise_loading import checkpoint_feature_values
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
 from physics_difficulty.pairwise.losses import auxiliary_loss_weight, normalized_auxiliary_loss
-from physics_difficulty.schema import FEATURE_VALUES
+from physics_difficulty.schema import FEATURE_SCHEMA_VERSION, FEATURE_VALUES
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,7 +96,11 @@ def save_checkpoint(model: torch.nn.Module, tokenizer: Any, optimizer: torch.opt
     torch.save(optimizer.state_dict(), checkpoint / "optimizer.pt")
     torch.save(scheduler.state_dict(), checkpoint / "scheduler.pt")
     (checkpoint / "trainer_state.json").write_text(json.dumps(trainer_state, ensure_ascii=False, indent=2), encoding="utf-8")
-    checkpoint_config = {**vars(args), "feature_values": raw.feature_values}
+    checkpoint_config = {
+        **vars(args),
+        "feature_schema_version": FEATURE_SCHEMA_VERSION,
+        "feature_values": raw.feature_values,
+    }
     (checkpoint / "pairwise_config.json").write_text(
         json.dumps(checkpoint_config, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -181,9 +185,8 @@ def main() -> None:
         resume_feature_values = checkpoint_feature_values(resume_config, state)
         if args.auxiliary_features and resume_feature_values != FEATURE_VALUES:
             raise ValueError(
-                "cannot resume a legacy merged information-processing checkpoint with "
-                "the current separate graph/experiment heads; rebuild auxiliary data "
-                "and start a new run"
+                "cannot resume an auxiliary checkpoint whose feature vocabulary differs "
+                f"from {FEATURE_SCHEMA_VERSION}; rebuild auxiliary data and start a new run"
             )
         model.norm.load_state_dict(state["norm"])
         model.score_head.load_state_dict(state["score_head"])

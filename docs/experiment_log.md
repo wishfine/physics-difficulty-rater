@@ -1517,3 +1517,40 @@ artifacts:
   config: configs/question_selection_v4_teacher_level_10k.json
   manifest_schema: teacher_level_aux11_question_selection_v1
 ```
+
+## 18. Aux11 step_count 改为三档
+
+```yaml
+date: 2026-08-03
+status: CODE_COMPLETE_SERVER_DATA_REBUILD_PENDING
+supersedes_feature_schema: aux11_separate_processing_v4
+feature_schema_version: aux11_step3_v5
+source_records: 58977
+source_distribution:
+  1-2步: 30084
+  3-5步: 25495
+  6-8步: 3373
+  9-12步: 22
+  12步以上: 3
+new_values:
+  - 1-2步
+  - 3-5步
+  - 6步以上
+new_distribution:
+  1-2步: 30084
+  3-5步: 25495
+  6步以上: 3398
+compatibility:
+  old_aux11_step4_checkpoint_resume: forbidden
+  old_aux11_step4_checkpoint_evaluation: use_checkpoint_embedded_feature_values
+teacher_pair_labeling_impact:
+  restart_required: false
+  reason: pair teacher prompt reads only question_a_text and question_b_text; auxiliary labels are not exposed
+pair_graph_impact:
+  rebuild_required: false
+  reason: graph and pair IDs were frozen before labeling; only 25 source questions occupied the removed high-step distinction
+downstream_required:
+  - regenerate curated auxiliary data with aux11_step3_v5
+  - attach regenerated Aux11 labels after pair teacher finalization
+  - train new auxiliary checkpoints from scratch
+```

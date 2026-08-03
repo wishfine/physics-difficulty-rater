@@ -5,6 +5,7 @@ from typing import Any, Dict, List
 
 DIFFICULTY_LEVELS = ["送分题", "基础题", "中等题", "拔高题", "压轴题"]
 DIFFICULTY_TO_ID = {name: index for index, name in enumerate(DIFFICULTY_LEVELS)}
+FEATURE_SCHEMA_VERSION = "aux11_step3_v5"
 
 PROBLEM_STRUCTURE_VALUES = ["概念判断", "直接计算", "实验探究", "图像表格分析", "电路综合", "力学综合", "热学综合", "光学声学综合", "跨模块综合"]
 KNOWLEDGE_DOMAINS = ["力学", "电路", "热学", "光学声学"]
@@ -14,7 +15,7 @@ FROZEN_18_FEATURE_NAMES = (
     "state_count", "constraint_count", "variable_relation", "experiment_requirement", "graph_table_requirement", "error_risk",
 )
 
-STEP_COUNT_VALUES = ["1-2步", "3-5步", "6-8步", "9步以上"]
+STEP_COUNT_VALUES = ["1-2步", "3-5步", "6步以上"]
 INFORMATION_PROCESSING_VALUES = [
     "无", "图表直接读数", "图表多组比较归纳", "图像反推或外推",
     "实验基础操作或读数", "实验控制变量或故障分析",
@@ -76,8 +77,8 @@ def normalize_knowledge_domains(features: Dict[str, Any] | None) -> List[str]:
 def normalize_v2_features(legacy: Dict[str, Any] | None) -> Dict[str, Any]:
     legacy = legacy or {}
     step = str(legacy.get("step_count", LEGACY_DEFAULTS["step_count"])).strip()
-    if step in {"9-12步", "12步以上"}:
-        step = "9步以上"
+    if step in {"6-8步", "9-12步", "12步以上", "9步以上"}:
+        step = "6步以上"
     result = {
         "problem_structure": normalize_problem_structure(legacy.get("problem_structure")),
         "step_count": _valid("step_count", step, "1-2步"),
