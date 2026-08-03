@@ -391,6 +391,36 @@ current_aux11:
 | `graph_table_requirement` | 4 类单标签 | 无、直接读数、多组比较归纳、图像反推或外推 |
 | `experiment_requirement` | 4 类单标签 | 无、基础操作或读数、控制变量或故障分析、方案设计或误差评价 |
 
+对应到当前 `aux11_step3_v5` 学生模型，11 个辅助分类头的输出维度为：
+
+```text
+shared question representation h
+├── problem_structure: Linear(H, 9)
+├── step_count: Linear(H, 3)
+├── calculation_complexity: Linear(H, 4)
+├── reasoning_chain: Linear(H, 4)
+├── knowledge_count: Linear(H, 3)
+├── subquestion_dependency: Linear(H, 3)
+├── state_count: Linear(H, 4)
+├── constraint_count: Linear(H, 3)
+├── variable_relation: Linear(H, 4)
+├── graph_table_requirement: Linear(H, 4)
+└── experiment_requirement: Linear(H, 4)
+```
+
+这里的 `H` 是共享单题表示的隐藏维度，每个 `Linear(H, C)` 输出该特征 `C` 个候选类别的
+logits。11 个头合计输出 45 个 logits：
+
+```text
+9 + 3 + 4 + 4 + 3 + 3 + 4 + 3 + 4 + 4 + 4 = 45
+```
+
+相比旧 Aux10，当前结构有两处关键变化：
+
+1. `step_count` 从旧四类调整为三类，因此输出维度由 `Linear(H, 4)` 变为 `Linear(H, 3)`；
+2. 删除 `information_processing: Linear(H, 8)`，改为两个相互独立的四分类头，使同一道题可以
+   同时表达图表要求和实验要求。
+
 学生模型中的 Aux11 是辅助任务，不是主任务。主任务仍然输出单题连续难度标量，并使用
 Bradley–Terry pairwise loss。Aux11 使用较低权重作为表征正则，不在推理后通过硬规则自动
 升降档。
