@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import sys
@@ -39,17 +40,23 @@ def exclusions(paths: list[str]) -> tuple[set[str], set[str]]:
     ids: set[str] = set()
     texts: set[str] = set()
     for value in paths:
-        with Path(value).open(encoding="utf-8") as source:
-            for line in source:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                for key in ("id", "question_id", "question_a_id", "question_b_id"):
-                    if row.get(key) is not None:
-                        ids.add(str(row[key]))
-                for key in ("text", "question_a_text", "question_b_text"):
-                    if str(row.get(key) or "").strip():
-                        texts.add(normalize_for_dedup(row[key]))
+        path = Path(value)
+        if path.suffix.lower() == ".csv":
+            with path.open(encoding="utf-8-sig", newline="") as source:
+                rows = list(csv.DictReader(source))
+        else:
+            rows = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+        for row in rows:
+            for key in ("id", "question_id", "question_a_id", "question_b_id", "题目ID"):
+                if row.get(key) is not None and str(row[key]).strip():
+                    ids.add(str(row[key]).strip())
+            for key in ("text", "question_a_text", "question_b_text"):
+                if str(row.get(key) or "").strip():
+                    texts.add(normalize_for_dedup(row[key]))
     return ids, texts
 
 
@@ -165,7 +172,10 @@ def main() -> None:
                 counters["missing_stratification_label"] += 1
                 continue
             group_id = question_group_identifier(row, question_id)
-            accepted.append((stable_key(args.seed, group_id), row, label))
+            reference_row = dict(row)
+            reference_row["source_split"] = row.get("split")
+            reference_row["split"] = "calibration_reference"
+            accepted.append((stable_key(args.seed, group_id), reference_row, label))
     accepted.sort(key=lambda item: (item[0], question_identifier(item[1])))
     if len(accepted) < args.records:
         raise ValueError(f"only {len(accepted)} eligible records; requested {args.records}")
@@ -208,6 +218,8 @@ def main() -> None:
         smoke_entries = selected_entries[: args.smoke_records]
     selected = [row for _, row, _ in selected_entries]
     smoke = [row for _, row, _ in smoke_entries]
+    selected_source_splits = Counter(str(row.get("source_split") or "unspecified") for row in selected)
+    smoke_source_splits = Counter(str(row.get("source_split") or "unspecified") for row in smoke)
     output = Path(args.output)
     smoke_output = Path(args.smoke_output)
     manifest = Path(args.manifest)
@@ -255,6 +267,9 @@ def main() -> None:
         "eligible_records": len(accepted),
         "selected_records": len(selected),
         "smoke_records": len(smoke),
+        "selected_source_split_counts": dict(selected_source_splits),
+        "smoke_source_split_counts": dict(smoke_source_splits),
+        "output_split": "calibration_reference",
         "output": str(output.resolve()),
         "output_sha256": sha256_file(output),
         "smoke_output": str(smoke_output.resolve()),

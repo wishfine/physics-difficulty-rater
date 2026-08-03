@@ -39,6 +39,7 @@ class CalibrationReferenceSelectionTests(unittest.TestCase):
             self.assertFalse(report["labels_used_for_proportional_stratification"])
             self.assertFalse(report["labels_exported"])
             self.assertEqual(report["distribution_claim"], "source_distribution_only; natural-business status requires external provenance")
+            self.assertEqual({row["split"] for row in selected}, {"calibration_reference"})
 
     def test_preserves_declared_business_difficulty_proportions(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -68,6 +69,26 @@ class CalibrationReferenceSelectionTests(unittest.TestCase):
             self.assertEqual(report["stratification"]["smoke_counts"], {"送分题": 6, "基础题": 4})
             selected_rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
             self.assertTrue(all("teacher_difficulty_level" not in row for row in selected_rows))
+            self.assertEqual({row["split"] for row in selected_rows}, {"calibration_reference"})
+
+    def test_csv_gold_ids_are_excluded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "questions.jsonl"
+            gold = root / "gold.csv"
+            rows = [{"id": str(index), "text": f"【题干】题目{index}"} for index in range(6)]
+            source.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+            gold.write_text("题目ID,修订后主标签\n2,基础题\n", encoding="utf-8")
+            output = root / "selected.jsonl"
+            subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "select_calibration_reference_questions.py"),
+                 "--input", str(source), "--output", str(output),
+                 "--smoke-output", str(root / "smoke.jsonl"), "--manifest", str(root / "manifest.json"),
+                 "--records", "5", "--smoke-records", "2", "--exclude", str(gold)],
+                check=True, capture_output=True, text=True,
+            )
+            selected = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+            self.assertNotIn("2", {row["id"] for row in selected})
 
 
 if __name__ == "__main__":
