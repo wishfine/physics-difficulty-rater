@@ -1,12 +1,11 @@
 # Physics Difficulty Rater
 
-V2 is an independent, text-only Qwen + LoRA multi-task classifier for junior
-high-school physics question difficulty. It predicts five final business
-levels (`送分题` to `压轴题`) and ten interpretable auxiliary features. This
-release is compatible with the frozen physics Prompt + V7 teacher system:
-`problem_structure` is its original nine-class single-label output, and all
-ten auxiliary heads are single-choice classifications. Physical domains are
-derived into the non-training `feature_metadata.knowledge_domains` field.
+The current system is a text-only Qwen + LoRA Bradley–Terry difficulty rater
+with an optional 11-head auxiliary objective. Historical V3 used Aux10; the
+current 10k/40k expansion uses `aux11_step3_v5`, including a three-class
+`step_count` head. The complete Frozen18 field dictionary, deterministic
+Aux10/Aux11 mappings, and 58,977-record data report are documented in
+[Frozen18 to Aux10/Aux11](docs/frozen18_to_aux11_data_contract.md).
 
 ## Environment
 
@@ -36,7 +35,7 @@ python scripts/split_teacher_data.py --input data/curated/teacher_v2.jsonl --out
 python scripts/oof_audit.py --input data/curated/split_v2/train.jsonl --output data/curated/train_with_oof.jsonl
 ```
 
-For a refreshed large export, audit the 18-to-10 feature conversion after
+For a refreshed large export, audit the Frozen18-to-current-Aux11 conversion after
 `prepare_teacher_data.py`:
 
 ```bash
@@ -47,7 +46,7 @@ python scripts/audit_teacher_feature_conversion.py \
 ```
 
 The audit verifies that frozen 18-dimensional teacher features are preserved
-and that the ten-dimensional features are derived exactly. The source
+and that the current 11 auxiliary features are derived exactly. The source
 `difficulty` field is ignored for labels and is never training supervision.
 
 ## Training
