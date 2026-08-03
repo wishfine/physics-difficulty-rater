@@ -114,6 +114,12 @@ def main() -> None:
     parser.add_argument("--smoke-records", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exclude", action="append", default=[])
+    parser.add_argument(
+        "--audit-overlap",
+        action="append",
+        default=[],
+        help="Question/pair JSONL or gold CSV whose overlap is reported but not excluded.",
+    )
     parser.add_argument("--source-provenance", default="unknown")
     parser.add_argument(
         "--stratification-labels",
@@ -220,6 +226,21 @@ def main() -> None:
     smoke = [row for _, row, _ in smoke_entries]
     selected_source_splits = Counter(str(row.get("source_split") or "unspecified") for row in selected)
     smoke_source_splits = Counter(str(row.get("source_split") or "unspecified") for row in smoke)
+    overlap_audit = []
+    selected_ids = {question_identifier(row) for row in selected}
+    selected_texts = {normalize_for_dedup(row["text"]) for row in selected}
+    for value in args.audit_overlap:
+        audit_ids, audit_texts = exclusions([value])
+        id_overlap = selected_ids & audit_ids
+        text_overlap = selected_texts & audit_texts
+        overlap_audit.append({
+            "path": str(Path(value).resolve()),
+            "sha256": sha256_file(Path(value)),
+            "question_id_overlap": len(id_overlap),
+            "normalized_text_overlap": len(text_overlap),
+            "question_id_overlap_ratio": len(id_overlap) / len(selected),
+            "sample_question_ids": sorted(id_overlap)[:20],
+        })
     output = Path(args.output)
     smoke_output = Path(args.smoke_output)
     manifest = Path(args.manifest)
@@ -245,6 +266,7 @@ def main() -> None:
         "input": str(Path(args.input).resolve()),
         "input_sha256": sha256_file(Path(args.input)),
         "excluded_files": [str(Path(value).resolve()) for value in args.exclude],
+        "non_excluding_overlap_audit": overlap_audit,
         "stratification": (
             {
                 "labels_file": str(Path(args.stratification_labels).resolve()),

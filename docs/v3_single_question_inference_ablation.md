@@ -21,7 +21,8 @@ reference 的冻结规则：
 - 不使用错误的 `difficulty`、`raw_difficulty` 或 Aux 特征进行抽样；
 - 只使用当前教师五档做比例分层，严格复现 5.9 万业务总体的五档自然占比，不做五档均衡或稀有档过采样；
 - 使用现有稳定 `question_id`，按 `sha256(seed, question_group_id)` 固定顺序；
-- 排除 V3 train/validation/test 中出现过的 ID 和规范化文本；
+- 必须排除用于报告效果的 validation、test 和 gold 中出现过的 ID 与规范化文本；
+- train 重合不作为硬性禁止，因为 reference 只定义业务总体分数分布，不使用标签监督；但必须记录 ID/文本重合率，并做 seen/unseen 阈值敏感性审计；
 - 预先冻结 10,000 道题，其中前 1,000 道为 smoke 子集；
 - 两个 checkpoint 必须读取同一文件，且保持相同题目顺序。
 

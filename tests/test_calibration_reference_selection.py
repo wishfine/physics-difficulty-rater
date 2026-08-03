@@ -90,6 +90,28 @@ class CalibrationReferenceSelectionTests(unittest.TestCase):
             selected = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
             self.assertNotIn("2", {row["id"] for row in selected})
 
+    def test_training_overlap_is_reported_without_exclusion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "questions.jsonl"
+            train = root / "train.jsonl"
+            rows = [{"id": str(index), "text": f"【题干】题目{index}"} for index in range(10)]
+            source.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+            train.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+            output = root / "selected.jsonl"
+            manifest = root / "manifest.json"
+            subprocess.run(
+                [sys.executable, str(ROOT / "scripts" / "select_calibration_reference_questions.py"),
+                 "--input", str(source), "--output", str(output),
+                 "--smoke-output", str(root / "smoke.jsonl"), "--manifest", str(manifest),
+                 "--records", "5", "--smoke-records", "2", "--audit-overlap", str(train)],
+                check=True, capture_output=True, text=True,
+            )
+            report = json.loads(manifest.read_text(encoding="utf-8"))
+            audit = report["non_excluding_overlap_audit"][0]
+            self.assertEqual(audit["question_id_overlap"], 5)
+            self.assertEqual(audit["question_id_overlap_ratio"], 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
