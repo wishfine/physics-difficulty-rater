@@ -29,6 +29,16 @@ class FeatureAwarePairSamplingTests(unittest.TestCase):
         self.assertIn("EXPECTED_PAIR_COUNT=${EXPECTED_PAIR_COUNT:-8000}", script)
         self.assertIn('if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]', script)
 
+    def test_production_cascade_parallelizes_and_merges_nonthinking_shards(self):
+        script = (ROOT / "scripts" / "server_run_cascade_production.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('NONTHINKING_SHARDS="$OUTPUT_ROOT/nonthinking/shards"', script)
+        self.assertIn('CUDA_VISIBLE_DEVICES="$GPU_PAIR_1"', script)
+        self.assertIn('CUDA_VISIBLE_DEVICES="$GPU_PAIR_2"', script)
+        self.assertIn('--input "$NONTHINKING_0" --input "$NONTHINKING_1"', script)
+        self.assertIn('--output "$NONTHINKING"', script)
+
     def test_balanced_selection_keeps_rare_auxiliary_category(self):
         feature_rows = [
             feature_row(f"q{index}", "概念判断" if index < 11 else "实验探究")

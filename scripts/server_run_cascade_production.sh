@@ -33,29 +33,83 @@ if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]; then
   exit 1
 fi
 
-mkdir -p "$OUTPUT_ROOT"/{logs,nonthinking,routing,thinking_1024/shard-000,thinking_1024/shard-001,final}
+mkdir -p "$OUTPUT_ROOT"/{logs,nonthinking/shard-000,nonthinking/shard-001,routing,thinking_1024/shard-000,thinking_1024/shard-001,final}
 cd "$PROJECT_ROOT"
 export VLLM_USE_FLASHINFER_SAMPLER=0
 
 NONTHINKING="$OUTPUT_ROOT/nonthinking/raw_votes.jsonl"
+NONTHINKING_SHARDS="$OUTPUT_ROOT/nonthinking/shards"
+NONTHINKING_0="$OUTPUT_ROOT/nonthinking/shard-000/raw_votes.jsonl"
+NONTHINKING_1="$OUTPUT_ROOT/nonthinking/shard-001/raw_votes.jsonl"
 ESCALATED="$OUTPUT_ROOT/routing/escalated_thinking_1024.jsonl"
 SHARDS="$OUTPUT_ROOT/routing/thinking_shards"
 THINKING_0="$OUTPUT_ROOT/thinking_1024/shard-000/raw_votes.jsonl"
 THINKING_1="$OUTPUT_ROOT/thinking_1024/shard-001/raw_votes.jsonl"
 THINKING_MERGED="$OUTPUT_ROOT/thinking_1024/raw_votes.merged.jsonl"
 
-printf '\n[%s] Nonthinking screen: %s pairs on GPUs %s\n' "$(date --iso-8601=seconds)" "$PAIR_COUNT" "$GPU_PAIR_1" \
-  >> "$OUTPUT_ROOT/logs/nonthinking.log"
+pids=()
+cleanup() {
+  for pid in "${pids[@]:-}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+}
+trap cleanup INT TERM EXIT
+
+wait_workers() {
+  local stage=$1
+  local status=0
+  for pid in "${pids[@]}"; do
+    if ! wait "$pid"; then status=1; fi
+  done
+  pids=()
+  if [[ "$status" -ne 0 ]]; then
+    echo "$stage shard failed; inspect $OUTPUT_ROOT/logs" >&2
+    exit 1
+  fi
+}
+
+python scripts/split_pair_file.py \
+  --input "$PAIRS_FILE" \
+  --output-dir "$NONTHINKING_SHARDS" \
+  --manifest "$OUTPUT_ROOT/nonthinking/shards.manifest.json" \
+  --shards 2 --seed 20260803
+
+printf '\n[%s] Nonthinking shard 0 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_1" \
+  >> "$OUTPUT_ROOT/logs/nonthinking_shard-000.log"
 env CUDA_VISIBLE_DEVICES="$GPU_PAIR_1" python scripts/run_local_pairwise_teacher.py \
   --config configs/qwen3_32b_pairwise_teacher_nonthinking.json \
   --model-path "$MODEL_PATH" \
-  --pairs "$PAIRS_FILE" \
-  --raw-votes-output "$NONTHINKING" \
-  --manifest "$OUTPUT_ROOT/nonthinking/teacher.manifest.json" \
+  --pairs "$NONTHINKING_SHARDS/shard-000.jsonl" \
+  --raw-votes-output "$NONTHINKING_0" \
+  --manifest "$OUTPUT_ROOT/nonthinking/shard-000/teacher.manifest.json" \
   --initial-samples-per-direction 3 \
   --uncertain-samples-per-direction 3 \
   --maximum-samples-per-direction 3 \
-  >> "$OUTPUT_ROOT/logs/nonthinking.log" 2>&1
+  >> "$OUTPUT_ROOT/logs/nonthinking_shard-000.log" 2>&1 &
+pids+=("$!")
+
+printf '\n[%s] Nonthinking shard 1 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_2" \
+  >> "$OUTPUT_ROOT/logs/nonthinking_shard-001.log"
+env CUDA_VISIBLE_DEVICES="$GPU_PAIR_2" python scripts/run_local_pairwise_teacher.py \
+  --config configs/qwen3_32b_pairwise_teacher_nonthinking.json \
+  --model-path "$MODEL_PATH" \
+  --pairs "$NONTHINKING_SHARDS/shard-001.jsonl" \
+  --raw-votes-output "$NONTHINKING_1" \
+  --manifest "$OUTPUT_ROOT/nonthinking/shard-001/teacher.manifest.json" \
+  --initial-samples-per-direction 3 \
+  --uncertain-samples-per-direction 3 \
+  --maximum-samples-per-direction 3 \
+  >> "$OUTPUT_ROOT/logs/nonthinking_shard-001.log" 2>&1 &
+pids+=("$!")
+
+wait_workers "Nonthinking"
+
+python scripts/merge_teacher_vote_shards.py \
+  --input "$NONTHINKING_0" --input "$NONTHINKING_1" \
+  --output "$NONTHINKING" \
+  --manifest "$OUTPUT_ROOT/nonthinking/merged.manifest.json"
 
 python scripts/route_cascade_nonthinking.py \
   --pairs "$PAIRS_FILE" \
@@ -70,16 +124,6 @@ python scripts/split_pair_file.py \
   --output-dir "$SHARDS" \
   --manifest "$OUTPUT_ROOT/routing/thinking_shards.manifest.json" \
   --shards 2 --seed 20260722
-
-pids=()
-cleanup() {
-  for pid in "${pids[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-}
-trap cleanup INT TERM EXIT
 
 printf '\n[%s] Thinking shard 0 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_1" \
   >> "$OUTPUT_ROOT/logs/thinking_1024_shard-000.log"
@@ -103,16 +147,7 @@ env CUDA_VISIBLE_DEVICES="$GPU_PAIR_2" python scripts/run_local_pairwise_teacher
   >> "$OUTPUT_ROOT/logs/thinking_1024_shard-001.log" 2>&1 &
 pids+=("$!")
 
-status=0
-for pid in "${pids[@]}"; do
-  if ! wait "$pid"; then status=1; fi
-done
-pids=()
-trap - INT TERM EXIT
-if [[ "$status" -ne 0 ]]; then
-  echo "Thinking shard failed; inspect $OUTPUT_ROOT/logs" >&2
-  exit 1
-fi
+wait_workers "Thinking"
 
 python scripts/merge_teacher_vote_shards.py \
   --input "$THINKING_0" --input "$THINKING_1" \
@@ -132,4 +167,5 @@ python scripts/validate_pairwise_data.py \
   --questions "$QUESTIONS_FILE" \
   --output "$OUTPUT_ROOT/final/validation_report.json"
 
+trap - INT TERM EXIT
 echo "Production cascade complete: $OUTPUT_ROOT/final/train_pairs.jsonl"
