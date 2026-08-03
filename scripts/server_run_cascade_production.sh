@@ -23,9 +23,11 @@ if [[ ! -f "$PAIRS_FILE" || ! -f "$QUESTIONS_FILE" ]]; then
   echo "Missing pair or question input" >&2
   exit 1
 fi
+SEQUENTIAL_SHARDS=false
 if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]; then
-  echo "GPU pairs must be different" >&2
-  exit 1
+  # A single TP=2 GPU pair can label both deterministic shards in sequence,
+  # leaving other GPUs available for student evaluation.
+  SEQUENTIAL_SHARDS=true
 fi
 PAIR_COUNT=$(grep -cve '^[[:space:]]*$' "$PAIRS_FILE")
 if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]; then
@@ -90,6 +92,10 @@ env CUDA_VISIBLE_DEVICES="$GPU_PAIR_1" python scripts/run_local_pairwise_teacher
   >> "$OUTPUT_ROOT/logs/nonthinking_shard-000.log" 2>&1 &
 pids+=("$!")
 
+if [[ "$SEQUENTIAL_SHARDS" == true ]]; then
+  wait_workers "Nonthinking shard 0"
+fi
+
 printf '\n[%s] Nonthinking shard 1 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_2" \
   >> "$OUTPUT_ROOT/logs/nonthinking_shard-001.log"
 env CUDA_VISIBLE_DEVICES="$GPU_PAIR_2" python scripts/run_local_pairwise_teacher.py \
@@ -135,6 +141,10 @@ env CUDA_VISIBLE_DEVICES="$GPU_PAIR_1" python scripts/run_local_pairwise_teacher
   --manifest "$OUTPUT_ROOT/thinking_1024/shard-000/teacher.manifest.json" \
   >> "$OUTPUT_ROOT/logs/thinking_1024_shard-000.log" 2>&1 &
 pids+=("$!")
+
+if [[ "$SEQUENTIAL_SHARDS" == true ]]; then
+  wait_workers "Thinking shard 0"
+fi
 
 printf '\n[%s] Thinking shard 1 on GPUs %s\n' "$(date --iso-8601=seconds)" "$GPU_PAIR_2" \
   >> "$OUTPUT_ROOT/logs/thinking_1024_shard-001.log"

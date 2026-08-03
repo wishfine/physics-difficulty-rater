@@ -36,6 +36,15 @@ class FeatureAwarePairSamplingTests(unittest.TestCase):
         self.assertIn('NONTHINKING_SHARDS="$OUTPUT_ROOT/nonthinking/shards"', script)
         self.assertIn('CUDA_VISIBLE_DEVICES="$GPU_PAIR_1"', script)
         self.assertIn('CUDA_VISIBLE_DEVICES="$GPU_PAIR_2"', script)
+
+    def test_production_cascade_can_run_two_shards_sequentially_on_one_gpu_pair(self):
+        script = (ROOT / "scripts" / "server_run_cascade_production.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("SEQUENTIAL_SHARDS=false", script)
+        self.assertIn('if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]', script)
+        self.assertIn('wait_workers "Nonthinking shard 0"', script)
+        self.assertIn('wait_workers "Thinking shard 0"', script)
         self.assertIn('--input "$NONTHINKING_0" --input "$NONTHINKING_1"', script)
         self.assertIn('--output "$NONTHINKING"', script)
 

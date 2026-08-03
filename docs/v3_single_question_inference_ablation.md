@@ -10,17 +10,24 @@
 
 V3 validation 由 500 道题组成 1,891 个 pair，适合评价 pairwise log loss、AUC 和 Aux10 同源标签表现，但不适合估计业务五档阈值。它既太小，又是实验验证集；把它用于阈值拟合会同时造成估计方差和模型选择泄漏。
 
+逐题复核的 1,049 条 gold 来自 1,066 条 GPT-5.6 rereview CSV：剔除 16 条旧训练集 ID 重叠题，并跳过 1 条无可渲染文本的纯图片题。它可以评价冻结阈值后的五档 strict accuracy、acceptable-level accuracy、macro-F1、balanced accuracy、MAE 和 QWK，但不得用于选择 checkpoint 或拟合阈值。该文件只有人工复核的五档难度，没有人工复核的 Aux10，因此不能报告 Aux10 gold accuracy。
+
 ## 2. Reference Pool
 
-阈值 reference 应来自与未来线上推理一致、按业务自然流入或库存分布抽取的独立题目集合。若只能使用当前源题库，应明确写作“源题库分布”，不能声称是自然业务分布。
+阈值 reference 应来自与未来线上推理一致、按业务自然流入或库存分布抽取的独立题目集合。当前 V4 的 5.9 万题已确认来自真实业务流量，因此可作为业务自然总体。
 
 reference 的冻结规则：
 
-- 不使用 `difficulty`、`raw_difficulty`、V3/V4 教师五档或 Aux 特征进行抽样；
+- 不使用错误的 `difficulty`、`raw_difficulty` 或 Aux 特征进行抽样；
+- 只使用当前教师五档做比例分层，严格复现 5.9 万业务总体的五档自然占比，不做五档均衡或稀有档过采样；
 - 使用现有稳定 `question_id`，按 `sha256(seed, question_group_id)` 固定顺序；
 - 排除 V3 train/validation/test 中出现过的 ID 和规范化文本；
 - 预先冻结 10,000 道题，其中前 1,000 道为 smoke 子集；
 - 两个 checkpoint 必须读取同一文件，且保持相同题目顺序。
+
+教师五档只存在私有抽样侧，输出 reference 只保留 `question_id`、文本和必要诊断信息，不携带五档标签。阈值拟合仍然只读取学生模型的连续 BT 分数。
+
+V3 和 V4 面向同一个线上题目总体，应共用同一份冻结的、版本无关的 `business_reference_v1`，以保持百分位语义可比；但每个 checkpoint 都必须重新在该题集上生成 raw score，并分别产生绑定自身 fingerprint 的 calibration 文件。不能把 V3 的 raw score 阈值复制给 V4。
 
 1,000 题只用于检查运行链路、分数是否塌缩、两模型排序趋势和 Aux 输出。正式阈值建议使用 10,000 题；至少使用 5,000 题，并报告 bootstrap 置信区间与样本量敏感性。
 
@@ -86,11 +93,23 @@ V3 推理一次 backbone 后，同时输出一个连续难度标量和十个辅�
 - 子样本阈值相对全量阈值造成的五档迁移率；
 - reference 数据版本、哈希、checkpoint fingerprint 和目标分布。
 
-## 6. GPU 暂停原则
+## 6. GPU 并行安排
 
-Qwen3-32B 教师打标的每个 worker 使用两张卡，并把每一轮结果持续追加到 shard 的 `raw_votes.jsonl`。单独终止一个 worker 后，其已有有效 votes 不会丢失；后续以完全相同的模型、配置、候选文件和输出文件重启时，只补缺失票。
+教师打标和学生模型评测并行执行，不暂停当前打标：
 
-不要直接终止外层 `server_run_cascade_production.sh`，因为它的退出清理会同时终止两个 shard。只终止准备释放的那个 `run_local_pairwise_teacher.py` worker，并在 GPU 显存释放后运行 V1/V3 单卡推理。恢复打标前先停止两项推理，再以原参数恢复对应 shard；不得更换配置或输出路径，否则配置哈希保护会拒绝续跑。
+```yaml
+teacher_labeling:
+  gpu: [0, 1]
+  model: Qwen3-32B
+  tensor_parallel_size: 2
+  shard_execution: sequential
+
+student_evaluation:
+  v1_bt_only_gpu: 3
+  v3_bt_aux10_gpu: 4
+```
+
+启动前必须通过 `nvidia-smi -i 0,1,3,4` 和进程列表确认没有旧 worker 占用 3、4。两个评测进程读取同一题目文件，但输出目录必须分开。
 
 ## 7. 判定标准
 
