@@ -125,6 +125,16 @@ def main() -> None:
         help="Question JSONL whose id/question_id values must be excluded; repeatable",
     )
     parser.add_argument("--calibration")
+    parser.add_argument(
+        "--include-auxiliary",
+        action="store_true",
+        help="Export auxiliary predictions from a checkpoint that contains auxiliary heads.",
+    )
+    parser.add_argument(
+        "--include-auxiliary-probabilities",
+        action="store_true",
+        help="Store every auxiliary class probability in addition to the winning label.",
+    )
     parser.add_argument("--max-length", type=int, default=1024)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
@@ -144,6 +154,10 @@ def main() -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model, tokenizer = load_pairwise_rater(args.model_path, args.checkpoint_dir, device, args.bf16)
+    if args.include_auxiliary and not model.auxiliary_features:
+        raise ValueError("--include-auxiliary requires a checkpoint with auxiliary heads")
+    if args.include_auxiliary_probabilities and not args.include_auxiliary:
+        raise ValueError("--include-auxiliary-probabilities requires --include-auxiliary")
     excluded_ids = load_excluded_ids(args.exclude_question_ids)
     dataset = QuestionDataset(args.questions, excluded_ids)
 
@@ -160,6 +174,15 @@ def main() -> None:
     temporary = output.with_suffix(output.suffix + ".tmp")
     score_values: list[float] = []
     split_counts: Counter[str] = Counter()
+    auxiliary_counts = {
+        name: Counter() for name in model.feature_values
+    } if args.include_auxiliary else {}
+    auxiliary_confidences = {
+        name: [] for name in model.feature_values
+    } if args.include_auxiliary else {}
+    auxiliary_normalized_entropies = {
+        name: [] for name in model.feature_values
+    } if args.include_auxiliary else {}
     print(json.dumps({
         "message": "Scoring individual questions; raw scores establish global ordering but are not absolute difficulty levels.",
         "records": len(dataset),
@@ -167,8 +190,17 @@ def main() -> None:
     }, ensure_ascii=False), flush=True)
     with temporary.open("w", encoding="utf-8") as target, torch.no_grad():
         for batch in loader:
-            scores = model.score(batch["input_ids"].to(device), batch["attention_mask"].to(device)).float().cpu().tolist()
-            for row, score in zip(batch["rows"], scores):
+            representation = model.encode(
+                batch["input_ids"].to(device), batch["attention_mask"].to(device)
+            )
+            scores = model.score_head(representation).squeeze(-1).float().cpu().tolist()
+            auxiliary_probabilities: dict[str, torch.Tensor] = {}
+            if args.include_auxiliary:
+                auxiliary_probabilities = {
+                    name: torch.softmax(head(representation).float(), dim=-1).cpu()
+                    for name, head in model.auxiliary_heads.items()
+                }
+            for row_index, (row, score) in enumerate(zip(batch["rows"], scores)):
                 if not math.isfinite(float(score)):
                     raise ValueError(f"question {row.get('id')} produced a non-finite score")
                 question_id = question_identifier(row)
@@ -182,6 +214,31 @@ def main() -> None:
                     or hashlib.sha256(str(row["text"]).encode("utf-8")).hexdigest(),
                     "raw_difficulty_score": float(score),
                 }
+                if args.include_auxiliary:
+                    result["auxiliary_predictions"] = {}
+                    for name, values in model.feature_values.items():
+                        probabilities = auxiliary_probabilities[name][row_index]
+                        label_id = int(probabilities.argmax().item())
+                        confidence = float(probabilities[label_id].item())
+                        entropy = float(
+                            -(probabilities * probabilities.clamp_min(1e-12).log()).sum().item()
+                        )
+                        normalized_entropy = entropy / math.log(len(values))
+                        prediction = {
+                            "label": values[label_id],
+                            "label_id": label_id,
+                            "confidence": confidence,
+                            "normalized_entropy": normalized_entropy,
+                        }
+                        if args.include_auxiliary_probabilities:
+                            prediction["probabilities"] = {
+                                label: float(probability)
+                                for label, probability in zip(values, probabilities.tolist())
+                            }
+                        result["auxiliary_predictions"][name] = prediction
+                        auxiliary_counts[name][values[label_id]] += 1
+                        auxiliary_confidences[name].append(confidence)
+                        auxiliary_normalized_entropies[name].append(normalized_entropy)
                 if calibration:
                     result.update(
                         apply_calibration(
@@ -193,7 +250,11 @@ def main() -> None:
                 target.write(json.dumps(result, ensure_ascii=False) + "\n")
     temporary.replace(output)
     report = {
-        "schema_version": "pairwise_single_question_scores_v1",
+        "schema_version": (
+            "pairwise_single_question_scores_with_auxiliary_v2"
+            if args.include_auxiliary
+            else "pairwise_single_question_scores_v1"
+        ),
         "records": len(dataset),
         "source_records": dataset.source_records,
         "excluded_question_count": dataset.excluded_records,
@@ -215,6 +276,23 @@ def main() -> None:
         },
         "calibrated": calibration is not None,
         "calibration_id": calibration.get("calibration_id") if calibration else None,
+        "auxiliary_exported": args.include_auxiliary,
+        "auxiliary_probabilities_exported": args.include_auxiliary_probabilities,
+        "auxiliary_feature_values": model.feature_values if args.include_auxiliary else None,
+        "auxiliary_summary": (
+            {
+                name: {
+                    "predicted_class_counts": dict(auxiliary_counts[name]),
+                    "mean_confidence": statistics.fmean(auxiliary_confidences[name]),
+                    "mean_normalized_entropy": statistics.fmean(
+                        auxiliary_normalized_entropies[name]
+                    ),
+                }
+                for name in model.feature_values
+            }
+            if args.include_auxiliary
+            else None
+        ),
         "output": str(output.resolve()),
         "output_sha256": sha256_file(output),
     }
