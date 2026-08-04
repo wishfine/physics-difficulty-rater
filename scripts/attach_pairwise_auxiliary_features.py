@@ -12,7 +12,13 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from physics_difficulty.schema import FEATURE_TO_ID
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_V3_FEATURE_VALUES
+
+
+FEATURE_SCHEMAS = {
+    "current_aux11": FEATURE_VALUES,
+    "legacy_v3_aux10": LEGACY_V3_FEATURE_VALUES,
+}
 
 
 def sha256(path: Path) -> str:
@@ -33,14 +39,19 @@ def read_jsonl(path: Path):
                     raise ValueError(f"invalid JSON at {path}:{line_number}: {error}") from error
 
 
-def validated_features(row: dict[str, Any], path: Path, line_number: int) -> dict[str, str]:
+def validated_features(
+    row: dict[str, Any],
+    path: Path,
+    line_number: int,
+    feature_values: dict[str, list[str]],
+) -> dict[str, str]:
     raw = row.get("teacher_features")
     if not isinstance(raw, dict):
         raise ValueError(f"missing teacher_features at {path}:{line_number}")
     result: dict[str, str] = {}
-    for name, value_to_id in FEATURE_TO_ID.items():
+    for name, values in feature_values.items():
         value = raw.get(name)
-        if value not in value_to_id:
+        if value not in values:
             raise ValueError(f"invalid teacher feature {name}={value!r} at {path}:{line_number}")
         result[name] = value
     return result
@@ -52,11 +63,20 @@ def main() -> None:
     parser.add_argument("--features", required=True, help="Frozen18 curated JSONL; only id, teacher_features, and label_quality.sample_weight are read")
     parser.add_argument("--output", required=True)
     parser.add_argument("--manifest", required=True)
+    parser.add_argument(
+        "--feature-schema",
+        choices=sorted(FEATURE_SCHEMAS),
+        default="current_aux11",
+        help="Auxiliary vocabulary expected by the target checkpoint",
+    )
     parser.add_argument("--step-count-overrides", help="Optional consensus-only JSONL from aggregate_step_count_rechecks.py")
     parser.add_argument("--minimum-question-coverage", type=float, default=0.95)
     args = parser.parse_args()
     if not 0 <= args.minimum_question_coverage <= 1:
         raise ValueError("minimum-question-coverage must be in [0, 1]")
+    feature_values = {
+        name: list(values) for name, values in FEATURE_SCHEMAS[args.feature_schema].items()
+    }
 
     pairs_path = Path(args.pairs)
     features_path = Path(args.features)
@@ -73,7 +93,9 @@ def main() -> None:
         quality = float((row.get("label_quality") or {}).get("sample_weight", 1.0))
         if not 0 < quality <= 1:
             raise ValueError(f"invalid feature quality for {question_id}: {quality}")
-        feature_index[question_id] = (validated_features(row, features_path, line_number), quality)
+        feature_index[question_id] = (
+            validated_features(row, features_path, line_number, feature_values), quality
+        )
 
     step_overrides: dict[str, str] = {}
     overrides_path = Path(args.step_count_overrides) if args.step_count_overrides else None
@@ -81,7 +103,7 @@ def main() -> None:
         for line_number, row in read_jsonl(overrides_path):
             question_id = str(row.get("question_id") or "").strip()
             step_count = row.get("step_count")
-            if not question_id or step_count not in FEATURE_TO_ID["step_count"]:
+            if not question_id or step_count not in feature_values["step_count"]:
                 raise ValueError(f"invalid step-count override at {overrides_path}:{line_number}")
             if question_id in step_overrides:
                 raise ValueError(f"duplicate step-count override question id: {question_id}")
@@ -131,7 +153,12 @@ def main() -> None:
             target.write(json.dumps(result, ensure_ascii=False) + "\n")
 
     report = {
-        "schema_version": "pairwise_auxiliary_aux11_v2",
+        "schema_version": (
+            "pairwise_auxiliary_legacy_v3_aux10_v1"
+            if args.feature_schema == "legacy_v3_aux10"
+            else "pairwise_auxiliary_aux11_v2"
+        ),
+        "feature_schema": args.feature_schema,
         "pairs": str(pairs_path.resolve()),
         "features": str(features_path.resolve()),
         "output": str(output_path.resolve()),
@@ -141,7 +168,8 @@ def main() -> None:
         "missing_questions": len(requested_ids - matched_ids),
         "missing_pair_sides": missing_pair_sides,
         "question_coverage": coverage,
-        "feature_names": list(FEATURE_TO_ID),
+        "feature_names": list(feature_values),
+        "feature_values": feature_values,
         "join_key": "question_id == curated.id",
         "ignored_absolute_label_fields": ["difficulty", "raw_difficulty", "teacher_difficulty_id", "teacher_difficulty_level"],
         "step_count_overrides": str(overrides_path.resolve()) if overrides_path else None,

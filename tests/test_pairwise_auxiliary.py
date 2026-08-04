@@ -9,7 +9,11 @@ from types import SimpleNamespace
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from physics_difficulty.schema import FEATURE_TO_ID, FEATURE_VALUES
+from physics_difficulty.schema import (
+    FEATURE_TO_ID,
+    FEATURE_VALUES,
+    LEGACY_V3_FEATURE_VALUES,
+)
 
 try:
     import torch
@@ -49,6 +53,13 @@ if nn is not None:
 
 def features(first=False):
     return {name: values[min(1, len(values) - 1)] if first else values[0] for name, values in FEATURE_VALUES.items()}
+
+
+def legacy_v3_features(first=False):
+    return {
+        name: values[min(1, len(values) - 1)] if first else values[0]
+        for name, values in LEGACY_V3_FEATURE_VALUES.items()
+    }
 
 
 class PairwiseAuxiliaryTests(unittest.TestCase):
@@ -122,6 +133,39 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             self.assertEqual(joined["auxiliary_feature_quality"]["question_b"], 0.9)
             report = json.loads(manifest.read_text(encoding="utf-8"))
             self.assertEqual(report["question_coverage"], 1.0)
+
+    def test_join_supports_frozen_legacy_v3_aux10_schema(self):
+        pair = {
+            "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
+            "question_a_text": "题 A", "question_b_text": "题 B", "soft_target": 0.75,
+        }
+        teachers = [
+            {"id": "qa", "teacher_features": legacy_v3_features()},
+            {"id": "qb", "teacher_features": legacy_v3_features(True)},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            pairs, teacher = directory / "pairs.jsonl", directory / "teacher.jsonl"
+            output, manifest = directory / "joined.jsonl", directory / "manifest.json"
+            pairs.write_text(json.dumps(pair, ensure_ascii=False) + "\n", encoding="utf-8")
+            teacher.write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in teachers),
+                encoding="utf-8",
+            )
+            subprocess.run([
+                sys.executable, str(ROOT / "scripts" / "attach_pairwise_auxiliary_features.py"),
+                "--pairs", str(pairs), "--features", str(teacher), "--output", str(output),
+                "--manifest", str(manifest), "--minimum-question-coverage", "1.0",
+                "--feature-schema", "legacy_v3_aux10",
+            ], check=True, capture_output=True, text=True)
+            joined = json.loads(output.read_text(encoding="utf-8"))
+            attached = joined["auxiliary_features"]["question_a"]
+            self.assertEqual(attached, legacy_v3_features())
+            self.assertIn("information_processing", attached)
+            self.assertNotIn("graph_table_requirement", attached)
+            self.assertNotIn("experiment_requirement", attached)
+            report = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(report["feature_schema"], "legacy_v3_aux10")
 
     def test_join_applies_only_valid_step_count_overrides(self):
         pair = {

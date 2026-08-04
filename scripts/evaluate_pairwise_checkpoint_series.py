@@ -64,6 +64,7 @@ def prepare_evaluation_file(
     output_dir: Path,
     auxiliary_features: bool,
     features_file: Path | None,
+    feature_schema: str,
 ) -> Path:
     if not auxiliary_features:
         return validation_pairs
@@ -80,6 +81,7 @@ def prepare_evaluation_file(
             "--output", str(output),
             "--manifest", str(manifest),
             "--minimum-question-coverage", "0.95",
+            "--feature-schema", feature_schema,
         ])
     return output
 
@@ -89,6 +91,7 @@ def ensure_initial_checkpoint(
     run_dir: Path,
     auxiliary_features: bool,
     config: dict[str, Any],
+    feature_schema: str,
 ) -> Path:
     checkpoint = run_dir / "checkpoint-initial"
     complete = (
@@ -98,7 +101,15 @@ def ensure_initial_checkpoint(
         and (checkpoint / "initial_state.json").is_file()
     )
     if complete:
-        return checkpoint
+        initial_config = json.loads(
+            (checkpoint / "pairwise_config.json").read_text(encoding="utf-8")
+        )
+        schema_matches = (
+            not auxiliary_features
+            or initial_config.get("feature_schema") == feature_schema
+        )
+        if schema_matches:
+            return checkpoint
     command = [
         sys.executable,
         str(ROOT / "scripts" / "create_initial_pairwise_checkpoint.py"),
@@ -111,6 +122,7 @@ def ensure_initial_checkpoint(
     ]
     if auxiliary_features:
         command.append("--auxiliary-features")
+        command.extend(["--feature-schema", feature_schema])
     run(command)
     return checkpoint
 
@@ -191,6 +203,15 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     config = load_training_config(run_dir)
     auxiliary_features = bool(config.get("auxiliary_features", False))
+    feature_schema = str(config.get("auxiliary_feature_schema") or "").strip()
+    if not feature_schema:
+        feature_schema = (
+            "legacy_v3_aux10"
+            if "aux10" in str(config.get("train_file") or "").lower()
+            else "current_aux11"
+        )
+    if feature_schema not in {"legacy_v3_aux10", "current_aux11"}:
+        raise ValueError(f"unsupported auxiliary feature schema: {feature_schema}")
     target_epoch = int(config["num_train_epochs"])
 
     wait_for_file(validation_pairs, args.poll_seconds)
@@ -199,8 +220,11 @@ def main() -> None:
         output_dir,
         auxiliary_features,
         Path(args.features_file) if args.features_file else None,
+        feature_schema,
     )
-    initial = ensure_initial_checkpoint(model_path, run_dir, auxiliary_features, config)
+    initial = ensure_initial_checkpoint(
+        model_path, run_dir, auxiliary_features, config, feature_schema
+    )
     evaluated: dict[str, tuple[int, Path, Path]] = {}
     initial_result = evaluate_checkpoint(
         model_path, initial, eval_file, output_dir, 0,

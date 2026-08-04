@@ -16,6 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from physics_difficulty.models.qwen_pairwise import QwenPairwiseRater
+from physics_difficulty.schema import FEATURE_VALUES, LEGACY_V3_FEATURE_VALUES
+
+
+FEATURE_SCHEMAS = {
+    "current_aux11": FEATURE_VALUES,
+    "legacy_v3_aux10": LEGACY_V3_FEATURE_VALUES,
+}
 
 
 def main() -> None:
@@ -28,6 +35,11 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--bf16", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--auxiliary-features", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--feature-schema",
+        choices=sorted(FEATURE_SCHEMAS),
+        default="current_aux11",
+    )
     args = parser.parse_args()
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -43,7 +55,12 @@ def main() -> None:
     from peft import LoraConfig, get_peft_model
     targets = sorted({name.split(".")[-1] for name, module in base.named_modules() if isinstance(module, torch.nn.Linear)})
     backbone = get_peft_model(base, LoraConfig(r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, target_modules=targets, bias="none", task_type="FEATURE_EXTRACTION"))
-    model = QwenPairwiseRater(backbone, auxiliary_features=args.auxiliary_features).to(device)
+    feature_values = FEATURE_SCHEMAS[args.feature_schema]
+    model = QwenPairwiseRater(
+        backbone,
+        auxiliary_features=args.auxiliary_features,
+        feature_values=feature_values,
+    ).to(device)
     output = Path(args.output_dir)
     output.mkdir(parents=True, exist_ok=True)
     model.backbone.save_pretrained(output / "adapter")
@@ -56,6 +73,7 @@ def main() -> None:
         json.dumps(
             {
                 "auxiliary_features": args.auxiliary_features,
+                "feature_schema": args.feature_schema,
                 "feature_values": model.feature_values,
             },
             ensure_ascii=False,
