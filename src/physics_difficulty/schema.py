@@ -36,10 +36,15 @@ FEATURE_VALUES = {
     "experiment_requirement": ["无", "基础操作或读数", "控制变量或故障分析", "方案设计或误差评价"],
 }
 FEATURE_TO_ID = {name: {value: index for index, value in enumerate(values)} for name, values in FEATURE_VALUES.items()}
+# V3 checkpoints predate the V4 Aux11/step3 schema.  Keep their vocabulary
+# frozen instead of deriving it from FEATURE_VALUES: changing the current
+# training schema must never change the output dimensions used to restore an
+# already-trained checkpoint.
 LEGACY_V3_FEATURE_VALUES = {
-    name: values for name, values in FEATURE_VALUES.items()
+    name: list(values) for name, values in FEATURE_VALUES.items()
     if name not in {"graph_table_requirement", "experiment_requirement"}
 }
+LEGACY_V3_FEATURE_VALUES["step_count"] = ["1-2步", "3-5步", "6-8步", "9步以上"]
 LEGACY_V3_FEATURE_VALUES["information_processing"] = INFORMATION_PROCESSING_VALUES
 
 LEGACY_DEFAULTS = {

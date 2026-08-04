@@ -3,7 +3,13 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from physics_difficulty.schema import FEATURE_SCHEMA_VERSION, FEATURE_VALUES, normalize_knowledge_domains, normalize_v2_features
+from physics_difficulty.schema import (
+    FEATURE_SCHEMA_VERSION,
+    FEATURE_VALUES,
+    LEGACY_V3_FEATURE_VALUES,
+    normalize_knowledge_domains,
+    normalize_v2_features,
+)
 from physics_difficulty.data.formatting import format_question
 from physics_difficulty.data.truncation import render_with_token_budget
 
@@ -25,6 +31,15 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(FEATURE_VALUES["step_count"], ["1-2步", "3-5步", "6步以上"])
         for source in ("6-8步", "9-12步", "12步以上", "9步以上", "6步以上"):
             self.assertEqual(normalize_v2_features({"step_count": source})["step_count"], "6步以上")
+
+    def test_legacy_v3_step_count_vocabulary_remains_four_way(self):
+        self.assertEqual(
+            LEGACY_V3_FEATURE_VALUES["step_count"],
+            ["1-2步", "3-5步", "6-8步", "9步以上"],
+        )
+        self.assertIn("information_processing", LEGACY_V3_FEATURE_VALUES)
+        self.assertNotIn("graph_table_requirement", LEGACY_V3_FEATURE_VALUES)
+        self.assertNotIn("experiment_requirement", LEGACY_V3_FEATURE_VALUES)
 
     def test_graph_and_experiment_requirements_stay_separate(self):
         features = normalize_v2_features({"graph_table_requirement": "直接读数", "experiment_requirement": "控制变量或故障分析"})
