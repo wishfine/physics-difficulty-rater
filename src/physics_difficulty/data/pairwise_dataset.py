@@ -37,6 +37,7 @@ class PairwiseDifficultyDataset(Dataset):
         self.tokenizer.padding_side = "right"
         self.question_degrees: Dict[str, int] = {}
         feature_counts = {name: [0] * len(value_to_id) for name, value_to_id in self.feature_to_id.items()}
+        question_feature_labels: Dict[str, Dict[str, str]] = {}
         for item in self.items:
             forbidden = forbidden_source_label_paths(item)
             if forbidden:
@@ -62,6 +63,7 @@ class PairwiseDifficultyDataset(Dataset):
                 for side in ("question_a", "question_b"):
                     side_features = auxiliary.get(side)
                     quality = float(qualities.get(side, 0.0))
+                    question_id = str(item[f"{side}_id"])
                     if side_features is None:
                         if quality != 0:
                             raise ValueError("missing auxiliary labels must have zero quality")
@@ -74,9 +76,24 @@ class PairwiseDifficultyDataset(Dataset):
                         value = side_features[name]
                         if value not in value_to_id:
                             raise ValueError(f"invalid auxiliary feature {name}={value!r}")
-                        feature_counts[name][value_to_id[value]] += 1
+                    normalized_features = {
+                        name: str(side_features[name]) for name in self.feature_to_id
+                    }
+                    previous = question_feature_labels.get(question_id)
+                    if previous is not None and previous != normalized_features:
+                        raise ValueError(
+                            f"inconsistent auxiliary labels for question_id={question_id}"
+                        )
+                    question_feature_labels[question_id] = normalized_features
         self.feature_class_weights: Dict[str, torch.Tensor] = {}
         if require_auxiliary_features:
+            # Estimate class balance from distinct questions. Counting every pair
+            # endpoint would make high-degree graph nodes influence the class
+            # weights repeatedly, even though degree correction later gives each
+            # question one unit of auxiliary supervision in total.
+            for side_features in question_feature_labels.values():
+                for name, value_to_id in self.feature_to_id.items():
+                    feature_counts[name][value_to_id[side_features[name]]] += 1
             for name, counts in feature_counts.items():
                 count_tensor = torch.tensor(counts, dtype=torch.float32).clamp_min(1)
                 weights = (count_tensor.rsqrt() / count_tensor.rsqrt().mean()).clamp(0.5, 2.0)

@@ -103,6 +103,24 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
         self.assertEqual(bt_only["gradient_accumulation_steps"], 16)
         self.assertEqual(bt_only["num_train_epochs"], 3)
 
+    def test_v4_ablation_configs_change_only_auxiliary_objective(self):
+        bt_only = json.loads(
+            (ROOT / "configs" / "v4_bt_only.json").read_text(encoding="utf-8")
+        )
+        bt_aux = json.loads(
+            (ROOT / "configs" / "v4_bt_aux11_w003.json").read_text(encoding="utf-8")
+        )
+        self.assertFalse(bt_only["auxiliary_features"])
+        self.assertEqual(bt_only["auxiliary_loss_weight"], 0.0)
+        self.assertTrue(bt_aux["auxiliary_features"])
+        self.assertEqual(bt_aux["auxiliary_loss_weight"], 0.03)
+        ignored = {"auxiliary_features", "auxiliary_loss_weight"}
+        self.assertEqual(
+            {key: value for key, value in bt_only.items() if key not in ignored},
+            {key: value for key, value in bt_aux.items() if key not in ignored},
+        )
+        self.assertEqual(bt_only["checkpoint_every_epochs"], 0.05)
+
     def test_join_uses_only_id_features_and_quality_not_absolute_difficulty(self):
         pair = {
             "pair_id": "p1", "question_a_id": "qa", "question_b_id": "qb",
@@ -242,6 +260,35 @@ class PairwiseAuxiliaryTests(unittest.TestCase):
             self.assertEqual(batch["auxiliary_targets_b"]["problem_structure"].tolist(), [1, 1])
             self.assertTrue(torch.allclose(batch["auxiliary_weights_a"], torch.tensor([0.4, 0.4])))
             self.assertTrue(torch.allclose(batch["auxiliary_weights_b"], torch.tensor([1.0, 1.0])))
+
+    @unittest.skipUnless(torch is not None, "PyTorch is not installed in this local test runtime")
+    def test_auxiliary_class_weights_count_distinct_questions_not_pair_endpoints(self):
+        feature_values = {"feature": ["rare", "common"]}
+        rows = []
+        for index, other in enumerate(("qb", "qc")):
+            rows.append({
+                "pair_id": f"p{index}", "question_a_id": "qa", "question_b_id": other,
+                "question_a_text": "题 A", "question_b_text": f"题 {other}",
+                "soft_target": 0.5,
+                "auxiliary_features": {
+                    "question_a": {"feature": "rare"},
+                    "question_b": {"feature": "common"},
+                },
+                "auxiliary_feature_quality": {"question_a": 1.0, "question_b": 1.0},
+            })
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "pairs.jsonl"
+            path.write_text(
+                "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows),
+                encoding="utf-8",
+            )
+            dataset = PairwiseDifficultyDataset(
+                str(path), DummyTokenizer(), 32,
+                require_auxiliary_features=True,
+                feature_values=feature_values,
+            )
+            weights = dataset.feature_class_weights["feature"]
+            self.assertGreater(float(weights[0]), float(weights[1]))
 
     @unittest.skipUnless(torch is not None, "PyTorch is not installed in this local test runtime")
     def test_model_returns_scalar_and_all_auxiliary_logits(self):
