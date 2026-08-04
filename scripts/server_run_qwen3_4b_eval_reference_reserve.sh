@@ -20,6 +20,19 @@ if [[ "${1:-}" == "__worker" ]]; then
   export PYTHONPATH="$PROJECT_DIR/src:$PROJECT_DIR"
   export PYTHONUNBUFFERED=1
 
+  worker_status_file="${PIPELINE_WORKER_STATUS_FILE:-}"
+  write_worker_status() {
+    worker_status=$?
+    trap - EXIT
+    if [[ -n "$worker_status_file" ]]; then
+      status_temporary="${worker_status_file}.tmp.$$"
+      printf '%s\n' "$worker_status" > "$status_temporary"
+      mv -f "$status_temporary" "$worker_status_file"
+    fi
+    exit "$worker_status"
+  }
+  trap write_worker_status EXIT
+
   for specification in "$@"; do
     run_name="${specification%%:*}"
     use_auxiliary="${specification##*:}"
@@ -136,14 +149,16 @@ start_vllm_reservation() {
   nohup setsid env \
     CUDA_VISIBLE_DEVICES="$GPU_A,$GPU_B" \
     PYTHONUNBUFFERED=1 \
+    PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
     "$VLLM_PYTHON" -m vllm.entrypoints.openai.api_server \
       --model "$VLLM_MODEL" \
       --tokenizer "$VLLM_MODEL" \
       --served-model-name qwen3-32b-gpu-reservation \
       --tensor-parallel-size 2 \
       --dtype auto \
-      --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.90}" \
+      --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION:-0.80}" \
       --max-model-len "${VLLM_MAX_MODEL_LEN:-4096}" \
+      --enforce-eager \
       --trust-remote-code \
       --host 0.0.0.0 \
       --port "$VLLM_PORT" \
@@ -189,7 +204,13 @@ export PIPELINE_FEATURES="$FEATURES"
 export PIPELINE_PYTHON="$INFER_PYTHON"
 
 # GPU A evaluates two runs serially; GPU B evaluates the remaining run.
-setsid env CUDA_VISIBLE_DEVICES="$GPU_A" \
+worker_a_status="$OUTPUT_ROOT/logs/gpu_${GPU_A}.status"
+worker_b_status="$OUTPUT_ROOT/logs/gpu_${GPU_B}.status"
+rm -f "$worker_a_status" "$worker_b_status"
+
+setsid env \
+  CUDA_VISIBLE_DEVICES="$GPU_A" \
+  PIPELINE_WORKER_STATUS_FILE="$worker_a_status" \
   "$SCRIPT_PATH" __worker \
     v1_bt_only:false \
     v2_bt_aux10_w010:true \
@@ -197,7 +218,9 @@ setsid env CUDA_VISIBLE_DEVICES="$GPU_A" \
 worker_a=$!
 WORKER_PIDS+=("$worker_a")
 
-setsid env CUDA_VISIBLE_DEVICES="$GPU_B" \
+setsid env \
+  CUDA_VISIBLE_DEVICES="$GPU_B" \
+  PIPELINE_WORKER_STATUS_FILE="$worker_b_status" \
   "$SCRIPT_PATH" __worker \
     v3_bt_aux10_w003:true \
   > "$OUTPUT_ROOT/logs/gpu_${GPU_B}.log" 2>&1 &
@@ -206,26 +229,40 @@ WORKER_PIDS+=("$worker_b")
 
 echo "Evaluation workers: gpu_${GPU_A}_pid=$worker_a gpu_${GPU_B}_pid=$worker_b"
 
-remaining_pids=("$worker_a" "$worker_b")
-while (( ${#remaining_pids[@]} > 0 )); do
-  finished_pid=""
-  set +e
-  wait -n -p finished_pid "${remaining_pids[@]}"
-  worker_status=$?
-  set -e
-
-  next_remaining=()
-  for pid in "${remaining_pids[@]}"; do
-    if [[ "$pid" != "$finished_pid" ]]; then
-      next_remaining+=("$pid")
+worker_a_complete=false
+worker_b_complete=false
+while [[ "$worker_a_complete" != "true" || "$worker_b_complete" != "true" ]]; do
+  if [[ "$worker_a_complete" != "true" && -s "$worker_a_status" ]]; then
+    status_a="$(tr -dc '0-9' < "$worker_a_status")"
+    wait "$worker_a" 2>/dev/null || true
+    worker_a_complete=true
+    if [[ "$status_a" != "0" ]]; then
+      echo "GPU $GPU_A evaluation worker failed with status $status_a" >&2
+      exit "$status_a"
     fi
-  done
-  remaining_pids=("${next_remaining[@]}")
-
-  if (( worker_status != 0 )); then
-    echo "Evaluation worker $finished_pid failed with status $worker_status" >&2
-    exit "$worker_status"
+    echo "GPU $GPU_A evaluation worker completed successfully"
   fi
+
+  if [[ "$worker_b_complete" != "true" && -s "$worker_b_status" ]]; then
+    status_b="$(tr -dc '0-9' < "$worker_b_status")"
+    wait "$worker_b" 2>/dev/null || true
+    worker_b_complete=true
+    if [[ "$status_b" != "0" ]]; then
+      echo "GPU $GPU_B evaluation worker failed with status $status_b" >&2
+      exit "$status_b"
+    fi
+    echo "GPU $GPU_B evaluation worker completed successfully"
+  fi
+
+  if [[ "$worker_a_complete" != "true" ]] && ! kill -0 "$worker_a" 2>/dev/null && [[ ! -s "$worker_a_status" ]]; then
+    echo "GPU $GPU_A worker disappeared without writing status" >&2
+    exit 1
+  fi
+  if [[ "$worker_b_complete" != "true" ]] && ! kill -0 "$worker_b" 2>/dev/null && [[ ! -s "$worker_b_status" ]]; then
+    echo "GPU $GPU_B worker disappeared without writing status" >&2
+    exit 1
+  fi
+  sleep 2
 done
 WORKER_PIDS=()
 
