@@ -80,6 +80,22 @@ python scripts/audit_calibration_stability.py \
 
 if [[ -n "$TEACHER_FEATURES" ]]; then
   test -s "$TEACHER_FEATURES" || { echo "Missing teacher feature file: $TEACHER_FEATURES" >&2; exit 1; }
+  python scripts/evaluate_pairwise_reference_levels.py \
+    --scores "$OUTPUT_ROOT/v1/scores.jsonl" \
+    --scores-manifest "$OUTPUT_ROOT/v1/scores.manifest.json" \
+    --labels "$TEACHER_FEATURES" \
+    --calibration-output-dir "$OUTPUT_ROOT/v1" \
+    --calibration-version-prefix "v1_reference" \
+    --output "$OUTPUT_ROOT/v1/reference_level_evaluation.json"
+
+  python scripts/evaluate_pairwise_reference_levels.py \
+    --scores "$OUTPUT_ROOT/v3/scores.jsonl" \
+    --scores-manifest "$OUTPUT_ROOT/v3/scores.manifest.json" \
+    --labels "$TEACHER_FEATURES" \
+    --calibration-output-dir "$OUTPUT_ROOT/v3" \
+    --calibration-version-prefix "v3_reference" \
+    --output "$OUTPUT_ROOT/v3/reference_level_evaluation.json"
+
   python scripts/evaluate_single_question_auxiliary.py \
     --scores "$OUTPUT_ROOT/v3/scores.jsonl" \
     --scores-manifest "$OUTPUT_ROOT/v3/scores.manifest.json" \
