@@ -253,18 +253,22 @@ mkdir -p "$BT_AUDIT"
 
 python scripts/audit_pairwise_with_bt.py \
   --input "$PAIR_ROOT/train_10k_40k/final/train_pairs.jsonl" \
+  --questions "$PAIR_ROOT/train_10k_40k/questions.jsonl" \
   --report "$BT_AUDIT/report.json" \
   --scores-output "$BT_AUDIT/question_scores.jsonl" \
   --residuals-output "$BT_AUDIT/pair_residuals.jsonl" \
   --folds 5 \
   --bootstrap-runs 20 \
+  --negative-controls \
   --seed 42
 ```
 
 The primary result is held-out soft pairwise log loss from a
 connectivity-preserving edge split. The report also includes the constant
 probability baseline, Brier score, direction accuracy/AUC, severe residual
-rate, diagonal Fisher score uncertainty, and bootstrap ranking stability.
+rate, weighted and unweighted metrics, graph-integrity gates, provenance
+slices, diagonal Fisher score uncertainty, connectivity-preserving bootstrap
+intervals/ranking stability, and optional negative controls.
 
 ### vLLM parity experiment for trained pairwise checkpoints
 

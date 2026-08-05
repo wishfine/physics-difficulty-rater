@@ -6,9 +6,19 @@ from collections import Counter, defaultdict, deque
 from typing import Any, Dict, Iterable, Sequence
 
 
-def soft_pairwise_metrics(predictions: Sequence[float], targets: Sequence[float]) -> Dict[str, Any]:
+def soft_pairwise_metrics(
+    predictions: Sequence[float],
+    targets: Sequence[float],
+    weights: Sequence[float] | None = None,
+) -> Dict[str, Any]:
     if len(predictions) != len(targets) or not targets:
         raise ValueError("predictions and non-empty targets must have equal length")
+    if weights is None:
+        weights = [1.0] * len(targets)
+    if len(weights) != len(targets):
+        raise ValueError("weights and targets must have equal length")
+    if any(not math.isfinite(weight) or weight <= 0 for weight in weights):
+        raise ValueError("metric weights must be positive and finite")
     eps = 1e-12
     log_loss = 0.0
     brier = 0.0
@@ -16,19 +26,27 @@ def soft_pairwise_metrics(predictions: Sequence[float], targets: Sequence[float]
     hard_count = 0
     decisive_correct = 0
     decisive_count = 0
-    for prediction, target in zip(predictions, targets):
+    hard_weight = 0.0
+    decisive_weight = 0.0
+    for prediction, target, weight in zip(predictions, targets, weights):
         if not 0 <= prediction <= 1 or not 0 <= target <= 1:
             raise ValueError("pairwise probabilities must be in [0, 1]")
         clipped = min(1 - eps, max(eps, prediction))
-        log_loss -= target * math.log(clipped) + (1 - target) * math.log(1 - clipped)
-        brier += (prediction - target) ** 2
+        log_loss -= weight * (
+            target * math.log(clipped) + (1 - target) * math.log(1 - clipped)
+        )
+        brier += weight * (prediction - target) ** 2
         if target != 0.5:
             hard_count += 1
-            hard_correct += (prediction >= 0.5) == (target > 0.5)
+            hard_weight += weight
+            hard_correct += weight * ((prediction >= 0.5) == (target > 0.5))
         if abs(target - 0.5) >= 0.2:
             decisive_count += 1
-            decisive_correct += (prediction >= 0.5) == (target >= 0.5)
-    count = len(targets)
+            decisive_weight += weight
+            decisive_correct += weight * (
+                (prediction >= 0.5) == (target >= 0.5)
+            )
+    weight_sum = float(sum(weights))
     hard_labels = [int(target > 0.5) for target in targets if target != 0.5]
     hard_scores = [prediction for prediction, target in zip(predictions, targets) if target != 0.5]
     positives = sum(hard_labels)
@@ -49,14 +67,15 @@ def soft_pairwise_metrics(predictions: Sequence[float], targets: Sequence[float]
         positive_rank_sum = sum(rank for rank, label in zip(ranks, hard_labels) if label)
         auc = (positive_rank_sum - positives * (positives + 1) / 2) / (positives * negatives)
     return {
-        "soft_pairwise_log_loss": log_loss / count,
-        "brier_score": brier / count,
-        "pairwise_accuracy": hard_correct / hard_count if hard_count else 0.0,
+        "soft_pairwise_log_loss": log_loss / weight_sum,
+        "brier_score": brier / weight_sum,
+        "pairwise_accuracy": hard_correct / hard_weight if hard_weight else 0.0,
         "non_tied_pair_count": hard_count,
         "pairwise_auc": auc,
         "auc_status": "OK" if positives and negatives else "UNDEFINED_SINGLE_CLASS",
-        "decisive_pairwise_accuracy": decisive_correct / decisive_count if decisive_count else 0.0,
+        "decisive_pairwise_accuracy": decisive_correct / decisive_weight if decisive_weight else 0.0,
         "decisive_pair_count": decisive_count,
+        "weight_sum": weight_sum,
     }
 
 
