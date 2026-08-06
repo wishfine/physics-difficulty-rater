@@ -137,6 +137,12 @@ def main() -> None:
     parser.add_argument("--high-confidence-low", type=float, default=0.20)
     parser.add_argument("--high-confidence-high", type=float, default=0.80)
     parser.add_argument(
+        "--high-confidence-min-behavior-evidence-quality",
+        type=float,
+        default=0.75,
+        help="Minimum per-side behavior evidence quality for high-confidence conflict decisions.",
+    )
+    parser.add_argument(
         "--behavior-full-weight-answer-count",
         type=float,
         default=200.0,
@@ -191,7 +197,23 @@ def main() -> None:
         b = behavior[question_b_id]
         probability = behavior_pair_probability(a, b)
         effective_count = harmonic_mean(float(a["answered_count"]), float(b["answered_count"]))
-        evidence_weight = min(1.0, effective_count / args.behavior_full_weight_answer_count)
+        quality_a = float(
+            a.get(
+                "behavior_evidence_quality",
+                1.0 if str(a.get("recovery_status", "")).startswith("rounded_exact") else 0.5,
+            )
+        )
+        quality_b = float(
+            b.get(
+                "behavior_evidence_quality",
+                1.0 if str(b.get("recovery_status", "")).startswith("rounded_exact") else 0.5,
+            )
+        )
+        evidence_quality = min(quality_a, quality_b)
+        evidence_weight = (
+            min(1.0, effective_count / args.behavior_full_weight_answer_count)
+            * evidence_quality
+        )
         target = float(row["soft_target"])
         item = {
             "schema_version": "behavior_teacher_pair_evidence_v1",
@@ -206,6 +228,9 @@ def main() -> None:
             "behavior_probability_a_harder": probability,
             "behavior_entropy_confidence": entropy_confidence(probability),
             "behavior_effective_answered_count": effective_count,
+            "behavior_evidence_quality": evidence_quality,
+            "question_a_behavior_evidence_type": a.get("behavior_evidence_type", "unknown"),
+            "question_b_behavior_evidence_type": b.get("behavior_evidence_type", "unknown"),
             "behavior_evidence_weight": evidence_weight,
             "behavior_soft_target_absolute_difference": abs(target - probability),
             "behavior_direction_agrees": (
@@ -231,6 +256,8 @@ def main() -> None:
             row["behavior_probability_a_harder"] <= low
             or row["behavior_probability_a_harder"] >= high
         )
+        and row["behavior_evidence_quality"]
+        >= args.high_confidence_min_behavior_evidence_quality
     ]
     conflicts = [
         row for row in high_confidence_comparable
@@ -302,6 +329,7 @@ def main() -> None:
             "teacher_high": high,
             "behavior_low": low,
             "behavior_high": high,
+            "minimum_behavior_evidence_quality": args.high_confidence_min_behavior_evidence_quality,
             "comparable_pairs": len(high_confidence_comparable),
             "agreement_pairs": len(high_confidence_comparable) - len(conflicts),
             "agreement_rate": (

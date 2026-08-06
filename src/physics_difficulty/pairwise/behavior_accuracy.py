@@ -66,16 +66,32 @@ def recover_correct_count(answered_count: int, percent_correct: Decimal) -> dict
     if candidates:
         correct = min(candidates, key=lambda item: (abs(Decimal(item) - center), item))
         status = "rounded_exact_unique" if len(candidates) == 1 else "rounded_exact_ambiguous"
+        effective_correct_count = float(correct)
+        evidence_type = "integer_recovered"
+        evidence_quality = 1.0 if len(candidates) == 1 else 0.85
     else:
         correct = min(
             range(max(0, floor_center - 2), min(answered_count, floor_center + 2) + 1),
             key=lambda item: (abs(Decimal(item) - center), item),
         )
-        status = "nearest_integer_fallback"
+        status = "continuous_rate_pseudocount"
+        effective_correct_count = float(center)
+        evidence_type = "continuous_rate_pseudocount"
+        # The reported rate is useful evidence, but may include partial credit
+        # or a denominator different from a literal correct/incorrect count.
+        evidence_quality = 0.5
     reconstructed = float(Decimal(100) * Decimal(correct) / Decimal(answered_count))
     return {
-        "correct_count": correct,
-        "incorrect_count": answered_count - correct,
+        "correct_count": correct if evidence_type == "integer_recovered" else None,
+        "incorrect_count": (
+            answered_count - correct if evidence_type == "integer_recovered" else None
+        ),
+        "integer_correct_count_estimate": correct,
+        "integer_incorrect_count_estimate": answered_count - correct,
+        "effective_correct_count": effective_correct_count,
+        "effective_incorrect_count": answered_count - effective_correct_count,
+        "behavior_evidence_type": evidence_type,
+        "behavior_evidence_quality": evidence_quality,
         "recovery_status": status,
         "matching_integer_count_candidate_count": len(candidates),
         "matching_integer_count_candidates_sample": candidates[:20],
@@ -91,7 +107,7 @@ def _logit(value: float, epsilon: float = 1e-12) -> float:
 
 def beta_posterior_summary(
     answered_count: int,
-    correct_count: int,
+    correct_count: float,
     prior_alpha: float = 1.0,
     prior_beta: float = 1.0,
 ) -> dict[str, float | str]:
@@ -137,7 +153,7 @@ def score_behavior_row(
     recovered = recover_correct_count(answered, percent)
     posterior = beta_posterior_summary(
         answered,
-        int(recovered["correct_count"]),
+        float(recovered["effective_correct_count"]),
         prior_alpha=prior_alpha,
         prior_beta=prior_beta,
     )
@@ -150,7 +166,7 @@ def score_behavior_row(
     if not isinstance(sub_questions, list):
         raise ValueError("sub_questions must be a list")
     output = {
-        "schema_version": "behavior_accuracy_score_v1",
+        "schema_version": "behavior_accuracy_score_v2",
         "question_id": question_id,
         "parent_id": parent_id,
         "structure_type": str(row.get("structure_type") or "unknown"),

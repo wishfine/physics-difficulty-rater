@@ -38,6 +38,21 @@ class BehaviorAccuracyUnitTests(unittest.TestCase):
         hard = beta_posterior_summary(100, 20)
         self.assertLess(easy["behavior_difficulty_score"], hard["behavior_difficulty_score"])
 
+    def test_unrecoverable_rate_is_retained_as_continuous_pseudocount(self):
+        result = score_behavior_row(
+            {
+                "question_id": "partial-credit",
+                "stem": "可部分得分题",
+                "answered_count": "21",
+                "percent_correct": "50.00",
+                "sub_questions": [],
+            }
+        )
+        self.assertEqual(result["behavior_evidence_type"], "continuous_rate_pseudocount")
+        self.assertEqual(result["correct_count"], None)
+        self.assertEqual(result["effective_correct_count"], 10.5)
+        self.assertEqual(result["behavior_evidence_quality"], 0.5)
+
     def test_pair_probability_follows_harder_direction(self):
         hard = score_behavior_row(
             {

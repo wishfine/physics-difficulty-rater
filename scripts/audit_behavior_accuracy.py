@@ -45,10 +45,15 @@ def main() -> None:
     parser.add_argument("--prior-beta", type=float, default=1.0)
     parser.add_argument("--minimum-answered-count", type=int, default=20)
     parser.add_argument(
-        "--maximum-reconstruction-error",
+        "--reject-continuous-rate-pseudocount",
+        action="store_true",
+        help="Quarantine rates that cannot be exactly reconstructed as an integer count.",
+    )
+    parser.add_argument(
+        "--maximum-invalid-rate",
         type=float,
-        default=0.011,
-        help="Maximum accepted percentage-point error after recovering integer correct count",
+        default=0.01,
+        help="Report WARN when invalid records exceed this fraction of source rows.",
     )
     args = parser.parse_args()
 
@@ -83,10 +88,13 @@ def main() -> None:
                         f"answered_count must be > {args.minimum_answered_count}"
                     )
                 if (
-                    score["absolute_percent_reconstruction_error"]
-                    > args.maximum_reconstruction_error
+                    args.reject_continuous_rate_pseudocount
+                    and score["behavior_evidence_type"]
+                    == "continuous_rate_pseudocount"
                 ):
-                    raise ValueError("percent_correct cannot be reconciled with an integer count")
+                    raise ValueError(
+                        "percent_correct cannot be reconciled with an integer count"
+                    )
                 question_id = score["question_id"]
                 fingerprint = row_fingerprint(raw)
                 if question_id in blocked_ids:
@@ -155,8 +163,15 @@ def main() -> None:
     write_jsonl(scores_path, scores)
     write_jsonl(quarantine_path, quarantine)
     report = {
-        "schema_version": "behavior_accuracy_audit_v1",
-        "status": "PASS" if scores and not stats["conflicting_duplicate_ids"] else "WARN",
+        "schema_version": "behavior_accuracy_audit_v2",
+        "status": (
+            "PASS"
+            if scores
+            and not stats["conflicting_duplicate_ids"]
+            and stats["invalid_rows"] / max(1, stats["source_records"])
+            <= args.maximum_invalid_rate
+            else "WARN"
+        ),
         "input": str(input_path.resolve()),
         "input_sha256": sha256_file(input_path),
         "data_contract": {
@@ -177,7 +192,10 @@ def main() -> None:
             "minimum_answered_count_exclusive": args.minimum_answered_count,
             "beta_prior_alpha": args.prior_alpha,
             "beta_prior_beta": args.prior_beta,
-            "maximum_percent_reconstruction_error": args.maximum_reconstruction_error,
+            "continuous_rate_pseudocount_accepted": (
+                not args.reject_continuous_rate_pseudocount
+            ),
+            "maximum_invalid_rate": args.maximum_invalid_rate,
         },
         "records": {
             **dict(stats),
@@ -207,7 +225,8 @@ def main() -> None:
         },
         "interpretation": (
             "This artifact is behavioral evidence derived from response counts, not a gold difficulty label. "
-            "It must be used for external consistency audit before any training fusion."
+            "Rates without an exact integer-count reconstruction are retained as lower-quality continuous "
+            "pseudo-count evidence. It must be used for external consistency audit before any training fusion."
         ),
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)

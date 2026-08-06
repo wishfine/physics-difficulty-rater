@@ -154,7 +154,7 @@ $$
 =r_j
 $$
 
-如果只有一个整数解，记录：
+如果只有一个整数解，记录为 `integer_recovered`：
 
 ```json
 {
@@ -163,17 +163,14 @@ $$
 }
 ```
 
-如果没有唯一解，则使用：
+如果没有整数解，不能直接把该记录判断为脏数据。多选、主观题、部分得分题或不同分母口径下，正确率可以是连续比例。此时保留：
 
 $$
-\hat c_j=
-\operatorname{round}
-\left(
+\tilde c_j=
 n_j\frac{r_j}{100}
-\right)
 $$
 
-并标记为 `rounded_approximation`。如果可获取原始 `correct_count`，应直接使用原始计数。
+作为连续伪计数，并标记为 `continuous_rate_pseudocount`。它可以参与 Beta 后验和外部一致性分析，但默认质量权重为整数恢复记录的一半，且不进入“高置信行为冲突”的判定。如果可获取原始 `correct_count`，应直接使用原始计数。
 
 样例中：
 
