@@ -23,8 +23,14 @@ if [[ ! -f "$PAIRS_FILE" || ! -f "$QUESTIONS_FILE" ]]; then
   exit 1
 fi
 PAIR_COUNT=$(grep -cve '^[[:space:]]*$' "$PAIRS_FILE")
-if [[ "$PAIR_COUNT" -ne 2000 ]]; then
-  echo "Validation input must contain exactly 2000 pairs, got $PAIR_COUNT" >&2
+EXPECTED_PAIR_COUNT=${EXPECTED_PAIR_COUNT:-2000}
+LABELING_SEED=${PAIRWISE_LABELING_SEED:-20260724}
+if [[ ! "$EXPECTED_PAIR_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+  echo "EXPECTED_PAIR_COUNT must be a positive integer, got $EXPECTED_PAIR_COUNT" >&2
+  exit 2
+fi
+if [[ "$PAIR_COUNT" -ne "$EXPECTED_PAIR_COUNT" ]]; then
+  echo "Validation input must contain exactly $EXPECTED_PAIR_COUNT pairs, got $PAIR_COUNT" >&2
   exit 1
 fi
 if [[ "$GPU_PAIR_1" == "$GPU_PAIR_2" ]]; then
@@ -37,6 +43,8 @@ if [[ "${PAIRWISE_LABELING_DRY_RUN:-0}" == "1" ]]; then
   echo "gpu_pair_1=$GPU_PAIR_1"
   echo "gpu_pair_2=$GPU_PAIR_2"
   echo "pair_count=$PAIR_COUNT"
+  echo "expected_pair_count=$EXPECTED_PAIR_COUNT"
+  echo "labeling_seed=$LABELING_SEED"
   exit 0
 fi
 
@@ -77,7 +85,7 @@ python scripts/split_pair_file.py \
   --input "$ESCALATED" \
   --output-dir "$SHARDS" \
   --manifest "$OUTPUT_ROOT/routing/thinking_shards.manifest.json" \
-  --shards 2 --seed 20260724
+  --shards 2 --seed "$LABELING_SEED"
 
 run_thinking_shard() {
   local shard_index=$1

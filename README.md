@@ -229,6 +229,26 @@ feature-contrast edges with lexical, structure, global, bridge, and degree
 repair edges, and reports per-category endpoint frequency and node degree.
 The selected question and candidate-pair files remain free of auxiliary labels.
 
+### V4 independent model-selection validation
+
+V4 model selection uses an independently labelled graph instead of reusing the
+V3 validation graph. Start from the already-isolated V4 `validation` split;
+`select_validation_questions.py` makes a deterministic simple-random 2,000-node
+sample from that split and never reads a difficulty label or an auxiliary
+feature. This preserves the business-source mix in expectation without turning
+the teacher's absolute five-level label into a training or selection signal.
+The candidate builder then uses private Aux11 only to design the 8,000
+comparison edges and audit coverage; those labels are not written to the
+questions or pairs sent to the teacher.
+
+Before teacher inference, run `validate_question_split_isolation.py` over the
+selected V4 train nodes, selected validation nodes, and untouched V4 test
+split. It requires both question-ID and normalized-text overlap to be zero.
+Label the 8,000 validation candidates through the existing cascade runner with
+`EXPECTED_PAIR_COUNT=8000`; the default remains 2,000 for the legacy V3
+validation job. The V4 test split remains untouched until the backbone,
+auxiliary-loss setting, and checkpoint policy are frozen.
+
 The production cascade keeps its safe 8,000-pair default. Set the registered
 override explicitly for this 40,000-pair run:
 

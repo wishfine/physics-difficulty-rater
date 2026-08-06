@@ -5,10 +5,16 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from collections import Counter
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from physics_difficulty.data.text_only import normalize_for_dedup
 
 
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -30,44 +36,69 @@ def main() -> None:
     errors: list[str] = []
     sources: list[dict[str, Any]] = []
     id_sets: list[set[str]] = []
+    normalized_text_sets: list[set[str]] = []
     paths = [Path(value) for value in args.questions]
     for path in paths:
         rows = load_jsonl(path)
         ids = [str(row.get("id")) for row in rows if row.get("id") is not None]
+        normalized_texts = [
+            normalize_for_dedup(row["text"])
+            for row in rows
+            if str(row.get("text") or "").strip()
+        ]
         duplicates = sorted(value for value, count in Counter(ids).items() if count > 1)
+        duplicate_texts = sum(
+            count - 1
+            for count in Counter(normalized_texts).values()
+            if count > 1
+        )
         missing_ids = len(rows) - len(ids)
+        missing_texts = len(rows) - len(normalized_texts)
         splits = sorted({str(row.get("split")) for row in rows})
         if missing_ids:
             errors.append(f"{path}: {missing_ids} records lack id")
         if duplicates:
             errors.append(f"{path}: duplicate question IDs: {duplicates[:10]}")
+        if missing_texts:
+            errors.append(f"{path}: {missing_texts} records lack text")
+        if duplicate_texts:
+            errors.append(f"{path}: {duplicate_texts} duplicate normalized texts")
         if len(splits) != 1:
             errors.append(f"{path}: expected one split, got {splits}")
         id_sets.append(set(ids))
+        normalized_text_sets.append(set(normalized_texts))
         sources.append({
             "path": str(path.resolve()),
             "sha256": sha256(path),
             "records": len(rows),
             "unique_question_ids": len(set(ids)),
+            "unique_normalized_texts": len(set(normalized_texts)),
             "split": splits[0] if len(splits) == 1 else None,
         })
 
     overlaps: list[dict[str, Any]] = []
     for (left_index, left), (right_index, right) in combinations(enumerate(id_sets), 2):
         overlap = sorted(left & right)
+        text_overlap = normalized_text_sets[left_index] & normalized_text_sets[right_index]
         overlaps.append({
             "left": str(paths[left_index].resolve()),
             "right": str(paths[right_index].resolve()),
             "count": len(overlap),
             "sample_ids": overlap[:20],
+            "normalized_text_count": len(text_overlap),
         })
         if overlap:
             errors.append(
                 f"{paths[left_index]} and {paths[right_index]} share {len(overlap)} question IDs"
             )
+        if text_overlap:
+            errors.append(
+                f"{paths[left_index]} and {paths[right_index]} share "
+                f"{len(text_overlap)} normalized question texts"
+            )
 
     report = {
-        "schema_version": "question_split_isolation_v1",
+        "schema_version": "question_split_isolation_v2",
         "status": "PASS" if not errors else "FAIL",
         "sources": sources,
         "overlaps": overlaps,

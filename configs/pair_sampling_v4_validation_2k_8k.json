@@ -1,0 +1,7 @@
+{
+  "seed": 20260806,
+  "target_pairs": 8000,
+  "minimum_degree": 4,
+  "maximum_degree": 16,
+  "maximum_feature_jsd": 0.05
+}
