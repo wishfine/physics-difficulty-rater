@@ -22,6 +22,52 @@ def feature_row(question_id: str, problem_structure: str) -> dict:
 
 
 class FeatureAwarePairSamplingTests(unittest.TestCase):
+    def test_candidate_config_controls_all_declared_parameters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            config = directory / "sampling.json"
+            questions = directory / "questions.jsonl"
+            output = directory / "pairs.jsonl"
+            selected = directory / "selected.jsonl"
+            manifest = directory / "manifest.json"
+            config.write_text(json.dumps({
+                "seed": 99,
+                "max_questions": 6,
+                "target_pairs": 8,
+                "minimum_degree": 2,
+                "maximum_degree": 4,
+                "maximum_feature_jsd": 0.07,
+            }) + "\n", encoding="utf-8")
+            questions.write_text(
+                "".join(
+                    json.dumps({
+                        "id": f"q{index}", "split": "validation", "text": f"物理题 {index}",
+                        "diagnostics": {"input_length_bucket": "short", "subquestion_count": 0,
+                                        "has_analysis": True, "has_options": False,
+                                        "image_dependency_risk": "medium", "has_image": False},
+                    }, ensure_ascii=False) + "\n"
+                    for index in range(8)
+                ),
+                encoding="utf-8",
+            )
+            result = subprocess.run([
+                sys.executable,
+                str(ROOT / "scripts" / "build_raw_v3_pair_candidates.py"),
+                "--config", str(config),
+                "--questions", str(questions),
+                "--output", str(output),
+                "--selected-questions-output", str(selected),
+                "--manifest", str(manifest),
+            ], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            self.assertEqual(payload["seed"], 99)
+            self.assertEqual(payload["question_count"], 6)
+            self.assertEqual(payload["created_pairs"], 8)
+            self.assertEqual(payload["minimum_degree_requested"], 2)
+            self.assertEqual(payload["maximum_degree_requested"], 4)
+            self.assertEqual(payload["maximum_feature_jsd_allowed"], 0.07)
+
     def test_production_cascade_allows_registered_40k_pair_count_override(self):
         script = (ROOT / "scripts" / "server_run_cascade_production.sh").read_text(
             encoding="utf-8"

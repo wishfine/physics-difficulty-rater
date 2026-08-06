@@ -180,17 +180,26 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--selected-questions-output", required=True)
     parser.add_argument("--manifest", required=True)
-    parser.add_argument("--target-pairs", type=int, required="target_pairs" not in defaults)
-    parser.add_argument("--minimum-degree", type=int, default=4)
-    parser.add_argument("--maximum-degree", type=int, default=12)
-    parser.add_argument("--max-questions", type=int)
+    parser.add_argument(
+        "--target-pairs",
+        type=int,
+        default=defaults.get("target_pairs"),
+        required="target_pairs" not in defaults,
+    )
+    parser.add_argument(
+        "--minimum-degree", type=int, default=defaults.get("minimum_degree", 4)
+    )
+    parser.add_argument(
+        "--maximum-degree", type=int, default=defaults.get("maximum_degree", 12)
+    )
+    parser.add_argument("--max-questions", type=int, default=defaults.get("max_questions"))
     parser.add_argument(
         "--maximum-feature-jsd",
         type=float,
-        default=0.05,
+        default=defaults.get("maximum_feature_jsd", 0.05),
         help="Maximum allowed marginal Jensen-Shannon divergence after feature-aware selection.",
     )
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=defaults.get("seed", 42))
     args = parser.parse_args()
 
     rows = load_jsonl(Path(args.questions))
